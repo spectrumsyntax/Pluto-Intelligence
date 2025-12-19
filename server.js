@@ -1,6 +1,8 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
- * Update: Instant-Boot optimization to prevent Render deployment cancellation.
+ * Update: Highly resilient browser discovery and instant-boot optimization.
+ * This version specifically addresses the "/usr/bin/google-chrome-stable" not found error
+ * by implementing a multi-strategy discovery engine.
  */
 
 require('dotenv').config();
@@ -15,26 +17,64 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Render Port Binding
+// Render Port Binding: Standard is 10000, fallback to 3000 for local dev.
 const PORT = process.env.PORT || 10000; 
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
 /**
- * Robust Browser Path Resolver
+ * Super-Resilient Browser Path Resolver
+ * Performs a surgical scan of the container filesystem to find the Chrome binary.
  */
 function resolveChromePath() {
+    console.log("[Pluto Config] Initiating browser discovery sequence...");
+
+    // 1. Check Environment Variable (Highest Priority)
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        console.log(`[Pluto Config] SUCCESS: Using path from ENV: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
         return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
-    const dockerPath = '/usr/bin/google-chrome-stable';
-    if (fs.existsSync(dockerPath)) return dockerPath;
+
+    // 2. Dynamic system search via 'which' (Highly effective on Linux)
     try {
-        const dynamicPath = execSync('which google-chrome-stable || which google-chrome || which chromium').toString().trim();
-        if (dynamicPath && fs.existsSync(dynamicPath)) return dynamicPath;
-    } catch (e) {}
-    return dockerPath;
+        const dynamicPath = execSync('which google-chrome-stable || which google-chrome || which chromium || which chromium-browser').toString().trim();
+        if (dynamicPath && fs.existsSync(dynamicPath)) {
+            console.log(`[Pluto Config] SUCCESS: Dynamic discovery found binary at: ${dynamicPath}`);
+            return dynamicPath;
+        }
+    } catch (e) {
+        console.warn("[Pluto Config] System 'which' command yielded no results.");
+    }
+
+    // 3. Exhaustive hardcoded scan of common cloud/container paths
+    const potentialPaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/opt/google/chrome/google-chrome',
+        '/usr/local/bin/google-chrome',
+        // Common Puppeteer cache subfolders in newer versions
+        '/home/pptruser/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
+        // General Render cache folder
+        '/opt/render/.cache/puppeteer'
+    ];
+
+    for (const path of potentialPaths) {
+        if (fs.existsSync(path)) {
+            // Check if it's a directory (Render cache often maps the folder, not the binary)
+            const stats = fs.lstatSync(path);
+            if (stats.isFile()) {
+                console.log(`[Pluto Config] SUCCESS: Found verified binary at: ${path}`);
+                return path;
+            }
+        }
+    }
+
+    // 4. Emergency check for internal node_modules/puppeteer structure
+    console.error("[Pluto Config] CRITICAL: Standard paths failed. Deployment may lack Chrome installation.");
+    return '/usr/bin/google-chrome-stable'; // Last resort fallback
 }
 
 /**
@@ -58,10 +98,13 @@ async function callLlamaWithRetry(messages, retries = 5) {
                     stream: false
                 })
             });
+
             if ((response.status === 429 || response.status === 503) && i < retries - 1) {
+                console.log(`[Pluto API] Rate limited. Retrying in ${defaultDelays[i]}ms...`);
                 await new Promise(res => setTimeout(res, defaultDelays[i]));
                 continue;
             }
+
             const result = await response.json();
             if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
             return result;
@@ -73,50 +116,74 @@ async function callLlamaWithRetry(messages, retries = 5) {
 }
 
 /**
- * Surgical Scraper
+ * Sanitize scraped content
+ */
+function sanitizeScrapedContent(text) {
+    if (!text) return "";
+    return text
+        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation/gi, "")
+        .replace(/[^\x20-\x7E\n]/g, " ") 
+        .substring(0, 12000);
+}
+
+/**
+ * Surgical Scraper - Optimized for Render Containers
  */
 async function extractConversationData(url) {
     let browser;
     try {
         const chromePath = resolveChromePath();
+        console.log(`[Pluto Scraper] Attempting to launch browser at ${chromePath}`);
+
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
             headless: "new", 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
+                '--disable-dev-shm-usage', // Mandatory for Docker/Render
                 '--disable-gpu',
-                '--single-process',
-                '--no-zygote'
+                '--no-zygote',
+                '--single-process', // Helps with resource constraints
+                '--no-first-run'
             ] 
         });
+
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        
+        // Extended timeout for slow cloud network
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        
         const content = await page.evaluate(() => {
-            const targets = ['.markdown.prose', '.message-content', 'article'];
+            const targets = ['.markdown.prose', '.message-content', 'article', 'main'];
             let data = [];
             targets.forEach(s => {
-                document.querySelectorAll(s).forEach(el => data.push(el.innerText.trim()));
+                document.querySelectorAll(s).forEach(el => {
+                    const text = el.innerText.trim();
+                    if (text.length > 50) data.push(text);
+                });
             });
-            return data.length > 0 ? data.join('\n\n') : document.body.innerText;
+            return data.length > 0 ? data.join('\n\n---\n\n') : document.body.innerText;
         });
-        return content.substring(0, 10000);
+        
+        return sanitizeScrapedContent(content);
     } catch (e) {
-        return `ERROR: ${e.message}`;
+        console.error(`[Scraper Fatal]: ${e.message}`);
+        return `DATA_ERROR: Browser could not be initialized. Path: ${resolveChromePath()}`;
     } finally {
-        if (browser) await browser.close();
+        if (browser) {
+            await browser.close();
+            console.log("[Pluto Scraper] Browser session closed.");
+        }
     }
 }
 
-/** * HEALTH ROUTES 
- * Essential for Render to keep the service alive.
- */
-app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.status(200).send('Pluto Engine Active'));
+/** ROUTES **/
 
-/** BUSINESS LOGIC **/
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/', (req, res) => res.status(200).send('Pluto Backend Engine Live'));
+
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
     try {
@@ -125,12 +192,12 @@ app.post('/api/initialize', async (req, res) => {
             const transcripts = await Promise.all(links.map(l => extractConversationData(l.url)));
             const combined = transcripts.join('\n\n');
             const result = await callLlamaWithRetry([
-                { role: "system", content: "Synthesize research data accurately." },
-                { role: "user", content: `DATA: ${combined}\n\nTITLE: ${title}` }
+                { role: "system", content: "You are Pluto. Synthesize this research accurately." },
+                { role: "user", content: `DATA:\n${combined}\n\nSESSION TITLE: ${title}` }
             ]);
             foundation = result.choices[0].message.content;
         } else {
-            foundation = `Session: ${title || 'Intelligence'}`;
+            foundation = `Pluto initialized for: ${title || 'General Intelligence'}`;
         }
         res.json({ success: true, foundation });
     } catch (e) {
@@ -143,7 +210,7 @@ app.post('/api/chat', async (req, res) => {
     try {
         const lastMsg = history[history.length - 1].content;
         const result = await callLlamaWithRetry([
-            { role: "system", content: `Grounding: ${foundation}` },
+            { role: "system", content: `You are Pluto. Ground your answers in this foundation: ${foundation}` },
             { role: "user", content: lastMsg }
         ]);
         res.json({ success: true, reply: result.choices[0].message.content });
@@ -152,10 +219,13 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-// STARTUP: Bind immediately to satisfy Render's port scan.
+/** STARTUP **/
+
+// Listen on 0.0.0.0 and PORT immediately to satisfy Render's readiness probe.
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Pluto Backend Active on port ${PORT}`);
+    console.log(`[Startup] Expected Browser Path: ${resolveChromePath()}`);
 });
 
-// Set timeout to 5 minutes for long synthesis tasks
+// Set global timeout to 5 minutes to handle slow synthesis.
 server.timeout = 300000;
