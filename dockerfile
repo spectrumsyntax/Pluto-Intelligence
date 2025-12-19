@@ -1,29 +1,28 @@
+# Use the official Puppeteer image which includes all necessary dependencies and Chrome
 FROM ghcr.io/puppeteer/puppeteer:24.33.1
 
-# Skip downloading another browser during npm install
+# 1. Essential Environment Variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
     NODE_ENV=production
 
-# Switch to root to fix directory ownership
+# 2. Switch to root to ensure we can set up the directory properly
 USER root
+
 WORKDIR /usr/src/app
 
-# Copy package files first
+# 3. Copy package files and fix ownership BEFORE installing
 COPY package*.json ./
 RUN chown -R pptruser:pptruser /usr/src/app
 
-# Switch to the limited user (Security requirement for Puppeteer)
+# 4. Switch back to the safe user
 USER pptruser
 
-# Install dependencies (will use pptruser permissions)
+# 5. Install dependencies
 RUN npm install 
 
-# Copy code with correct ownership
+# 6. Copy application code (maintaining pptruser ownership)
 COPY --chown=pptruser:pptruser . .
 
-# Expose port (Render requirement)
-EXPOSE 10000
-
-# Final start command
+# 7. Start the application
 CMD ["node", "server.js"]
