@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: A general-purpose AI assistant capable of research synthesis.
  * Integration: Environment-aware using .env for keys and configurations.
- * Fix: Consolidated robust browser pathing and Llama API integration.
+ * Fix: Robust multi-path browser detection for Linux environments.
  */
 
 require('dotenv').config();
@@ -10,6 +10,7 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch'); 
 const puppeteer = require('puppeteer'); 
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -20,6 +21,34 @@ const PORT = process.env.PORT || 10000; // Render default
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * Robust Browser Path Resolver
+ * Searches standard Linux paths to ensure the browser is found even if configuration differs.
+ */
+function resolveChromePath() {
+    if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    const standardPaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/opt/google/chrome/google-chrome'
+    ];
+
+    for (const path of standardPaths) {
+        if (fs.existsSync(path)) {
+            console.log(`[Pluto Config] Browser found at: ${path}`);
+            return path;
+        }
+    }
+
+    // Default fallback (will throw error if missing, which matches your error analysis)
+    return '/usr/bin/google-chrome-stable';
+}
 
 /**
  * Exponential Backoff Wrapper for Llama API (OpenAI Compatible)
@@ -80,15 +109,13 @@ function sanitizeScrapedContent(text) {
 
 /**
  * Surgical Scraper for AI Share Links (Gemini & ChatGPT)
- * Updated with Docker-compatible launch arguments and explicit pathing.
  */
 async function extractConversationData(url) {
     let browser;
     try {
         console.log(`[Pluto Scraper] Extracting content for: ${url}`);
         
-        // Define the chrome path based on environment
-        const chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+        const chromePath = resolveChromePath();
 
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
