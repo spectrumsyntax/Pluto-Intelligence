@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 // Load configurations from .env
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Render default
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
@@ -80,14 +80,24 @@ function sanitizeScrapedContent(text) {
 
 /**
  * Surgical Scraper for AI Share Links (Gemini & ChatGPT)
+ * Updated with Docker-compatible launch arguments
  */
 async function extractConversationData(url) {
     let browser;
     try {
         console.log(`[Pluto Scraper] Extracting content for: ${url}`);
         browser = await puppeteer.launch({ 
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
             headless: "new", 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--incognito'] 
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-zygote',
+                '--single-process',
+                '--incognito'
+            ] 
         });
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
@@ -115,11 +125,11 @@ async function extractConversationData(url) {
             return data.join('\n\n---\n\n');
         });
         
-        await browser.close();
         return sanitizeScrapedContent(content);
     } catch (e) {
-        if (browser) await browser.close();
         return `DATA_ERROR: ${e.message}`;
+    } finally {
+        if (browser) await browser.close();
     }
 }
 
@@ -206,5 +216,8 @@ app.post('/api/chat', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+// Health check for Render
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Backend Active on port ${PORT}`));
