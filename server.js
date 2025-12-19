@@ -1,7 +1,7 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: A general-purpose AI assistant capable of research synthesis.
- * Fix: Deep-Scrape logic for Gemini/ChatGPT to bypass legal boilerplate.
+ * Fix: Relaxed validation to allow content with legal footers and improved selectors.
  */
 
 require('dotenv').config();
@@ -84,43 +84,49 @@ async function extractConversationData(url) {
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
             headless: "new", 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote', '--single-process'] 
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage', 
+                '--no-zygote', 
+                '--single-process',
+                '--window-size=1920,1080'
+            ] 
         });
 
         const page = await browser.newPage();
+        // Set a more modern desktop user agent to avoid being flagged as a bot
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        // Use 'networkidle2' to wait for all background scripts to stop
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        // Wait for page load
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
         
-        // Extra 8s for React/Next.js content hydration
-        await new Promise(r => setTimeout(r, 8000));
+        // Extra time for AI content to render bubbles after the network is idle
+        await new Promise(r => setTimeout(r, 10000));
 
         const content = await page.evaluate(() => {
-            // Broad but specific selectors for AI chat apps
             const selectors = [
                 '.markdown', 
                 '.message-content', 
                 '.model-response-text',
                 'div[data-message-author-role]',
                 'article',
-                '.p-4.md\\:p-6'
+                '.p-4.md\\:p-6',
+                '.conversation-container',
+                'main' // Ultimate fallback
             ];
             
             let data = [];
             selectors.forEach(s => {
                 document.querySelectorAll(s).forEach(el => {
                     const txt = el.innerText.trim();
-                    // Ignore short strings that are likely UI labels
-                    if (txt.length > 50) data.push(txt);
+                    // Increased length check to ensure we grab real sentences
+                    if (txt.length > 60) data.push(txt);
                 });
             });
             
-            // If no specific bubbles found, try grabbing the main content area but skip nav/footers
             if (data.length === 0) {
-                const main = document.querySelector('main');
-                if (main && main.innerText.length > 200) return main.innerText;
-                return "SCRAPE_FAILURE: No chat bubbles detected.";
+                return "SCRAPE_FAILURE: No substantial content bubbles detected.";
             }
             return data.join('\n\n---\n\n');
         });
@@ -128,9 +134,12 @@ async function extractConversationData(url) {
         await browser.close();
         
         const final = sanitizeScrapedContent(content);
-        // If the result is just the website's legal footer, mark as failure
-        if (final.length < 300 || final.toLowerCase().includes('terms of service')) {
-            return "DATA_ERROR: Failed to bypass login/legal wall.";
+        
+        // Relaxed validation: Just check if we actually found substantial text
+        // (Removing the check for "terms of service" because it exists in the footer of successful pages)
+        if (final.length < 350 || final.includes("SCRAPE_FAILURE")) {
+            console.error(`[Pluto Scraper] Insufficient content found for ${url}. Length: ${final.length}`);
+            return "DATA_ERROR: Failed to extract meaningful content from the page.";
         }
         
         return final;
@@ -148,10 +157,13 @@ app.post('/api/initialize', async (req, res) => {
             const transcripts = await Promise.all(
                 links.filter(l => l.url).map(l => extractConversationData(l.url))
             );
-            const combinedData = transcripts.join('\n\n');
+            
+            // Filter out individual data errors but try to keep what worked
+            const validTranscripts = transcripts.filter(t => !t.startsWith("DATA_ERROR"));
+            const combinedData = validTranscripts.join('\n\n');
 
-            if (combinedData.includes("DATA_ERROR") || combinedData.length < 400) {
-                throw new Error("Pluto could not access the chat content. Please ensure your links are 'Public' share links and not your private URL.");
+            if (combinedData.length < 400) {
+                throw new Error("Pluto could not extract enough meaningful chat content from the links. Please ensure the links are set to 'Public' and contain text-based conversation.");
             }
 
             const result = await callLlamaWithRetry([
