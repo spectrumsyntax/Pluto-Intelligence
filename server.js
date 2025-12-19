@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: A general-purpose AI assistant capable of research synthesis.
  * Integration: Environment-aware using .env for keys and configurations.
- * Fix: Robust multi-path browser detection for Linux environments.
+ * Fix: Robust multi-path browser detection and deep logging for Linux.
  */
 
 require('dotenv').config();
@@ -24,29 +24,40 @@ const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/
 
 /**
  * Robust Browser Path Resolver
- * Searches standard Linux paths to ensure the browser is found even if configuration differs.
+ * Performs a deep scan of the system to find any usable Chrome/Chromium binary.
  */
 function resolveChromePath() {
-    if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
-        return process.env.PUPPETEER_EXECUTABLE_PATH;
+    console.log("[Pluto Config] Starting browser path resolution...");
+    
+    // 1. Check Environment Variable
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        if (fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+            console.log(`[Pluto Config] Using path from ENV: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
+            return process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else {
+            console.warn(`[Pluto Config] ENV path defined but NOT FOUND: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
+        }
     }
 
+    // 2. Scan Standard Linux Locations
     const standardPaths = [
         '/usr/bin/google-chrome-stable',
         '/usr/bin/google-chrome',
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
-        '/opt/google/chrome/google-chrome'
+        '/opt/google/chrome/google-chrome',
+        '/usr/local/bin/google-chrome'
     ];
 
     for (const path of standardPaths) {
         if (fs.existsSync(path)) {
-            console.log(`[Pluto Config] Browser found at: ${path}`);
+            console.log(`[Pluto Config] Valid browser binary located at: ${path}`);
             return path;
         }
     }
 
-    // Default fallback (will throw error if missing, which matches your error analysis)
+    // 3. Last Resort Fallback
+    console.error("[Pluto Config] CRITICAL: No browser binaries found in standard locations.");
     return '/usr/bin/google-chrome-stable';
 }
 
@@ -113,9 +124,8 @@ function sanitizeScrapedContent(text) {
 async function extractConversationData(url) {
     let browser;
     try {
-        console.log(`[Pluto Scraper] Extracting content for: ${url}`);
-        
         const chromePath = resolveChromePath();
+        console.log(`[Pluto Scraper] Launching browser at ${chromePath} for URL: ${url}`);
 
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
@@ -126,8 +136,7 @@ async function extractConversationData(url) {
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
                 '--no-zygote',
-                '--single-process',
-                '--incognito'
+                '--single-process'
             ] 
         });
 
@@ -135,7 +144,11 @@ async function extractConversationData(url) {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
         
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-        await page.waitForSelector('.markdown, .message-content, article', { timeout: 15000 }).catch(() => {});
+        
+        // Wait for content selectors
+        await page.waitForSelector('.markdown, .message-content, article', { timeout: 15000 }).catch(() => {
+            console.warn("[Pluto Scraper] Content selectors not found, falling back to body text.");
+        });
 
         const content = await page.evaluate(() => {
             const bubbles = ['.markdown.prose', '.message-content', 'div[id^="message-content"]', 'article div.flex-grow'];
@@ -162,7 +175,10 @@ async function extractConversationData(url) {
         console.error(`[Scraper Error]: ${e.message}`);
         return `DATA_ERROR: ${e.message}`;
     } finally {
-        if (browser) await browser.close();
+        if (browser) {
+            await browser.close();
+            console.log("[Pluto Scraper] Browser closed.");
+        }
     }
 }
 
@@ -176,7 +192,6 @@ app.post('/api/initialize', async (req, res) => {
     try {
         let foundation = "";
 
-        // MODE: Pluto-X Research Synthesis
         if (links && links.length > 0 && links.some(l => l.url && l.url.trim() !== "")) {
             const transcripts = await Promise.all(
                 links.filter(l => l.url && l.url.trim() !== "").map(l => extractConversationData(l.url))
@@ -197,7 +212,6 @@ app.post('/api/initialize', async (req, res) => {
             const result = await callLlamaWithRetry(messages);
             foundation = result.choices?.[0]?.message?.content;
         } 
-        // MODE: Standard Chat (Greet the User)
         else {
             const messages = [
                 { 
