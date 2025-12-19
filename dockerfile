@@ -12,8 +12,9 @@ WORKDIR /usr/src/app
 # (Note the space before ./ to ensure two arguments are provided)
 COPY package*.json ./
 
-# 3. Install dependencies using 'npm ci' for clean production builds
-RUN npm ci 
+# 3. Install dependencies 
+# Changed from 'npm ci' to 'npm install' to fix the lockfile sync error
+RUN npm install 
 
 # 4. Copy the rest of your application code
 COPY . .
