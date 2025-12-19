@@ -1,6 +1,7 @@
 FROM ghcr.io/puppeteer/puppeteer:24.33.1
 
 # 1. Skip downloading another browser during npm install
+# and set the path for the pre-installed Chrome binary
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
     NODE_ENV=production
@@ -11,6 +12,7 @@ USER root
 WORKDIR /usr/src/app
 
 # 3. Copy package files and change ownership to pptruser
+# Note: Ensure package-lock.json is in your repo or delete it if it's out of sync
 COPY package*.json ./
 RUN chown -R pptruser:pptruser /usr/src/app
 
@@ -18,6 +20,7 @@ RUN chown -R pptruser:pptruser /usr/src/app
 USER pptruser
 
 # 5. Install dependencies
+# We use 'npm install' to ensure any missing lockfile entries are resolved
 RUN npm install 
 
 # 6. Copy the rest of your application code
