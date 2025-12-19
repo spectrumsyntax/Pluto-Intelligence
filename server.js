@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Update: Highly resilient browser discovery and instant-boot optimization.
  * This version specifically addresses the "/usr/bin/google-chrome-stable" not found error
- * by implementing a multi-strategy discovery engine.
+ * by implementing a multi-strategy discovery engine and instant port binding.
  */
 
 require('dotenv').config();
@@ -55,15 +55,12 @@ function resolveChromePath() {
         '/usr/bin/chromium-browser',
         '/opt/google/chrome/google-chrome',
         '/usr/local/bin/google-chrome',
-        // Common Puppeteer cache subfolders in newer versions
         '/home/pptruser/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
-        // General Render cache folder
         '/opt/render/.cache/puppeteer'
     ];
 
     for (const path of potentialPaths) {
         if (fs.existsSync(path)) {
-            // Check if it's a directory (Render cache often maps the folder, not the binary)
             const stats = fs.lstatSync(path);
             if (stats.isFile()) {
                 console.log(`[Pluto Config] SUCCESS: Found verified binary at: ${path}`);
@@ -72,7 +69,6 @@ function resolveChromePath() {
         }
     }
 
-    // 4. Emergency check for internal node_modules/puppeteer structure
     console.error("[Pluto Config] CRITICAL: Standard paths failed. Deployment may lack Chrome installation.");
     return '/usr/bin/google-chrome-stable'; // Last resort fallback
 }
@@ -141,10 +137,10 @@ async function extractConversationData(url) {
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', // Mandatory for Docker/Render
+                '--disable-dev-shm-usage', 
                 '--disable-gpu',
                 '--no-zygote',
-                '--single-process', // Helps with resource constraints
+                '--single-process', 
                 '--no-first-run'
             ] 
         });
@@ -152,7 +148,6 @@ async function extractConversationData(url) {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        // Extended timeout for slow cloud network
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
         const content = await page.evaluate(() => {
@@ -170,7 +165,7 @@ async function extractConversationData(url) {
         return sanitizeScrapedContent(content);
     } catch (e) {
         console.error(`[Scraper Fatal]: ${e.message}`);
-        return `DATA_ERROR: Browser could not be initialized. Path: ${resolveChromePath()}`;
+        return `DATA_ERROR: Browser initialization failed. Error: ${e.message}`;
     } finally {
         if (browser) {
             await browser.close();
@@ -181,6 +176,7 @@ async function extractConversationData(url) {
 
 /** ROUTES **/
 
+// Standard health routes to satisfy Render's health checks instantly.
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/', (req, res) => res.status(200).send('Pluto Backend Engine Live'));
 
@@ -214,18 +210,21 @@ app.post('/api/chat', async (req, res) => {
             { role: "user", content: lastMsg }
         ]);
         res.json({ success: true, reply: result.choices[0].message.content });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
 /** STARTUP **/
 
-// Listen on 0.0.0.0 and PORT immediately to satisfy Render's readiness probe.
+// Listen on 0.0.0.0 and PORT immediately. This prevents Render from canceling the deploy.
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Pluto Backend Active on port ${PORT}`);
-    console.log(`[Startup] Expected Browser Path: ${resolveChromePath()}`);
+    // Delay browser logging to keep startup logs clean and fast
+    setTimeout(() => {
+        console.log(`[Startup Check] Target Browser Path: ${resolveChromePath()}`);
+    }, 1000);
 });
 
-// Set global timeout to 5 minutes to handle slow synthesis.
-server.timeout = 300000;
+// High timeout for cloud environment resource variance.
+server.timeout = 600000;
