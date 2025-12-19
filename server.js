@@ -26,25 +26,26 @@ const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/
 
 /**
  * Robust Browser Path Resolver
- * Uses a combination of ENV checks, standard path scanning, and system commands.
+ * Performs a surgical scan of the system to find any usable Chrome/Chromium binary.
  */
 function resolveChromePath() {
     console.log("[Pluto Config] Initiating deep scan for browser binaries...");
 
-    // 1. Check Environment Variable first
+    // 1. Check Environment Variable first (Render usually sets this)
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        console.log(`[Pluto Config] Using path from ENV: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
         return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
 
-    // 2. Try to locate via system 'which' command (Dynamic discovery)
+    // 2. Try to locate via system 'which' command
     try {
-        const dynamicPath = execSync('which google-chrome-stable || which google-chrome || which chromium').toString().trim();
+        const dynamicPath = execSync('which google-chrome-stable || which google-chrome || which chromium || which chromium-browser').toString().trim();
         if (dynamicPath && fs.existsSync(dynamicPath)) {
             console.log(`[Pluto Config] Dynamic discovery found browser at: ${dynamicPath}`);
             return dynamicPath;
         }
     } catch (e) {
-        console.warn("[Pluto Config] System 'which' command failed or no binary found.");
+        console.warn("[Pluto Config] System discovery command failed.");
     }
 
     // 3. Fallback to exhaustive list of standard Linux paths
@@ -54,8 +55,7 @@ function resolveChromePath() {
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
         '/opt/google/chrome/google-chrome',
-        '/usr/local/bin/google-chrome',
-        '/usr/bin/google-chrome-unstable'
+        '/usr/local/bin/google-chrome'
     ];
 
     for (const path of standardPaths) {
@@ -65,10 +65,10 @@ function resolveChromePath() {
         }
     }
 
-    // 4. Final attempt: Check Puppeteer's internal cache folder
-    const internalCachePath = '/home/pptruser/.cache/puppeteer';
-    if (fs.existsSync(internalCachePath)) {
-        console.log("[Pluto Config] Found Puppeteer cache folder. Attempting internal use...");
+    // 4. Final attempt: Check common Puppeteer cache locations on Render
+    const renderCachePath = '/opt/render/.cache/puppeteer';
+    if (fs.existsSync(renderCachePath)) {
+        console.log("[Pluto Config] Found Render cache folder. Note: Pathing might require subfolder mapping.");
     }
 
     console.error("[Pluto Config] CRITICAL: No Chrome executable found. Fallback to default.");
@@ -134,7 +134,7 @@ async function extractConversationData(url) {
     let browser;
     try {
         const chromePath = resolveChromePath();
-        console.log(`[Pluto Scraper] Launching: ${chromePath}`);
+        console.log(`[Pluto Scraper] Launching: ${chromePath} for URL: ${url}`);
 
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
@@ -146,19 +146,17 @@ async function extractConversationData(url) {
                 '--disable-gpu',
                 '--no-zygote',
                 '--single-process',
-                '--no-first-run',
-                '--disable-extensions'
+                '--no-first-run'
             ] 
         });
 
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
         
-        // Timeout handling for shared hosting
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        await page.waitForSelector('.markdown, .message-content, article', { timeout: 10000 }).catch(() => {
-            console.warn("[Pluto Scraper] Standard selectors missed. Scraping whole body.");
+        await page.waitForSelector('.markdown, .message-content, article', { timeout: 15000 }).catch(() => {
+            console.warn("[Pluto Scraper] Selectors missed. Using generic body scrape.");
         });
 
         const content = await page.evaluate(() => {
@@ -211,6 +209,7 @@ app.post('/api/initialize', async (req, res) => {
 
         res.json({ success: true, foundation });
     } catch (error) {
+        console.error("[Pluto Init Error]:", error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -230,6 +229,7 @@ app.post('/api/chat', async (req, res) => {
         const result = await callLlamaWithRetry(messages);
         res.json({ success: true, reply: result.choices?.[0]?.message?.content });
     } catch (error) {
+        console.error("[Pluto Chat Error]:", error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
