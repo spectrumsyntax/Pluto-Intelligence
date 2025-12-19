@@ -1,7 +1,7 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: A general-purpose AI assistant capable of research synthesis.
- * Update: Added self-healing browser discovery and diagnostic route.
+ * Update: Increased navigation timeouts to 120s to resolve Render network delays.
  */
 
 require('dotenv').config();
@@ -26,16 +26,13 @@ const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/
  * Super-Resilient Browser Path Resolver
  */
 function resolveChromePath() {
-    // 1. Priority: ENV variable
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
         return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
 
-    // 2. Priority: Standard Docker location for ghcr.io image
     const dockerPath = '/usr/bin/google-chrome-stable';
     if (fs.existsSync(dockerPath)) return dockerPath;
 
-    // 3. Dynamic Discovery
     try {
         const dynamicPath = execSync('which google-chrome-stable || which google-chrome || which chromium').toString().trim();
         if (dynamicPath && fs.existsSync(dynamicPath)) return dynamicPath;
@@ -80,14 +77,25 @@ async function callLlamaWithRetry(messages, retries = 5) {
 }
 
 /**
- * Surgical Scraper
+ * Sanitize scraped content
+ */
+function sanitizeScrapedContent(text) {
+    if (!text) return "";
+    return text
+        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation/gi, "")
+        .replace(/[^\x20-\x7E\n]/g, " ") 
+        .substring(0, 12000);
+}
+
+/**
+ * Surgical Scraper - Increased Timeout for Slow Connections
  */
 async function extractConversationData(url) {
     let browser;
     try {
         const chromePath = resolveChromePath();
-        console.log(`[Pluto Scraper] Attempting launch at: ${chromePath}`);
-        
+        console.log(`[Pluto Scraper] Launching: ${chromePath} for URL: ${url}`);
+
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
             headless: "new", 
@@ -96,15 +104,21 @@ async function extractConversationData(url) {
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
-                '--single-process',
-                '--no-zygote'
+                '--no-zygote',
+                '--single-process'
             ] 
         });
 
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
+        // Timeout increased from 60s to 120s to allow for slow Render network speeds
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 });
+        
+        await page.waitForSelector('.markdown, .message-content, article', { timeout: 20000 }).catch(() => {
+            console.warn("[Pluto Scraper] Selectors missed. Using body fallback.");
+        });
+
         const content = await page.evaluate(() => {
             const targets = ['.markdown.prose', '.message-content', 'article'];
             let data = [];
@@ -114,7 +128,7 @@ async function extractConversationData(url) {
             return data.length > 0 ? data.join('\n\n') : document.body.innerText;
         });
         
-        return content.substring(0, 10000);
+        return sanitizeScrapedContent(content);
     } catch (e) {
         console.error(`[Scraper Error]: ${e.message}`);
         return `ERROR: ${e.message}`;
@@ -126,24 +140,7 @@ async function extractConversationData(url) {
 /** ROUTES **/
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.status(200).send('Pluto Engine Active'));
-
-// Diagnostic Route: Use this to see what's happening inside the container
-app.get('/debug', (req, res) => {
-    try {
-        const binaryExists = fs.existsSync('/usr/bin/google-chrome-stable');
-        const binFolder = fs.readdirSync('/usr/bin').filter(f => f.includes('chrome') || f.includes('chromium'));
-        res.json({
-            status: "online",
-            port: PORT,
-            binaryExists,
-            browserBinariesInPath: binFolder,
-            envPath: process.env.PUPPETEER_EXECUTABLE_PATH
-        });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
+app.get('/', (req, res) => res.status(200).send('Pluto Backend Engine Active'));
 
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
@@ -180,6 +177,7 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
+// STARTUP
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Pluto Backend Active on port ${PORT}`);
 });
