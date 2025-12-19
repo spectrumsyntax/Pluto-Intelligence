@@ -3,6 +3,7 @@
  * Purpose: A general-purpose AI assistant capable of research synthesis.
  * Integration: Environment-aware using .env for keys and configurations.
  * Fix: Robust multi-path browser detection and deep logging for Linux.
+ * Update: Fixed port binding for Render compatibility.
  */
 
 require('dotenv').config();
@@ -17,7 +18,8 @@ app.use(cors());
 app.use(express.json());
 
 // Load configurations from .env
-const PORT = process.env.PORT || 10000; // Render default
+// Render expects the app to bind to process.env.PORT (default 10000)
+const PORT = process.env.PORT || 10000; 
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
@@ -269,4 +271,5 @@ app.post('/api/chat', async (req, res) => {
 // Health check for Render
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
+// Listen on 0.0.0.0 is critical for Docker on Render
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Backend Active on port ${PORT}`));
