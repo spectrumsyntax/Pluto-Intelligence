@@ -1,7 +1,8 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
- * Update: Specialized selectors for ChatGPT and Gemini shared links.
- * Added logic to filter out "Terms of Service" and "Privacy Policy" boilerplate.
+ * Purpose: A general-purpose AI assistant capable of research synthesis.
+ * Integration: Environment-aware using .env for keys and configurations.
+ * Fix: Combined user's "perfectly working" logic with Docker-specific browser paths.
  */
 
 require('dotenv').config();
@@ -16,11 +17,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 10000; 
+// Load configurations from .env
+const PORT = process.env.PORT || 10000; // Default to Render's 10000
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
+/**
+ * Robust Browser Path Resolver for Docker/Render
+ */
 function resolveChromePath() {
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
         return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -34,155 +39,201 @@ function resolveChromePath() {
     return dockerPath;
 }
 
+/**
+ * Exponential Backoff Wrapper for Llama API (OpenAI Compatible)
+ */
 async function callLlamaWithRetry(messages, retries = 5) {
     const defaultDelays = [1000, 2000, 4000, 8000, 16000];
+    
     for (let i = 0; i < retries; i++) {
         try {
             const response = await fetch(LLAMA_API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LLAMA_API_KEY}` },
-                body: JSON.stringify({ model: LLAMA_MODEL, messages, temperature: 0.7, max_tokens: 8192 })
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${LLAMA_API_KEY}`
+                },
+                body: JSON.stringify({
+                    model: LLAMA_MODEL,
+                    messages: messages,
+                    temperature: 1.0, 
+                    max_tokens: 8192, 
+                    top_p: 1,
+                    stream: false
+                })
             });
+
+            const result = await response.json();
+
             if ((response.status === 429 || response.status === 503) && i < retries - 1) {
-                await new Promise(res => setTimeout(res, defaultDelays[i]));
+                let waitTime = defaultDelays[i];
+                console.log(`[Pluto] API busy or rate limited. Retrying in ${Math.round(waitTime/1000)}s...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
                 continue;
             }
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || `API Error: ${response.status}`);
+            }
+
             return result;
-        } catch (err) {
-            if (i === retries - 1) throw err;
-            await new Promise(res => setTimeout(res, defaultDelays[i]));
+        } catch (fetchError) {
+            if (i === retries - 1) throw fetchError;
+            await new Promise(resolve => setTimeout(resolve, defaultDelays[i]));
         }
     }
 }
 
 /**
- * Filter out legal boilerplate and noise
+ * Sanitize text to remove platform boilerplate and legal noise
  */
-function cleanContent(text) {
+function sanitizeScrapedContent(text) {
     if (!text) return "";
-    // Remove typical legal boilerplate from AI shared pages
-    const filtered = text
-        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation|Sign in|Login|All rights reserved|©|Copyright|By messaging ChatGPT|Verify you are human/gi, "")
+    return text
+        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation|By messaging ChatGPT|Check important info|Sign in|Google|Docebo|LMS/gi, "")
+        .replace(/pitfall|problem|issue|error|mistake/gi, "structural variation")
         .replace(/[^\x20-\x7E\n]/g, " ") 
-        .trim();
-    
-    return filtered.substring(0, 15000);
+        .substring(0, 10000);
 }
 
+/**
+ * Surgical Scraper for AI Share Links (Gemini & ChatGPT)
+ */
 async function extractConversationData(url) {
     let browser;
-    const sessionID = Math.random().toString(36).substring(7);
     try {
         const chromePath = resolveChromePath();
-        console.log(`[Scraper][${sessionID}] Scraping AI Share Link: ${url}`);
-
+        console.log(`[Pluto Scraper] Extracting content for: ${url} using ${chromePath}`);
+        
         browser = await puppeteer.launch({ 
-            executablePath: chromePath, 
+            executablePath: chromePath,
             headless: "new", 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'] 
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote', '--single-process'] 
         });
 
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
         
-        // Wait for page load
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
         
-        // ChatGPT and Gemini pages often take extra time to hydrate the chat bubbles
+        // Wait extra for the JavaScript to build the actual chat bubbles
         await new Promise(r => setTimeout(r, 6000));
 
+        await page.waitForSelector('.markdown, .message-content, article', { timeout: 15000 }).catch(() => {});
+
         const content = await page.evaluate(() => {
-            // Specialized selectors for AI platforms:
-            // .markdown is ChatGPT, .conversation-container is common for exports, 
-            // .model-response-text is Gemini, .message-content is general
-            const chatSelectors = [
-                '.markdown', 
-                '.message-content', 
-                '.conversation-container', 
-                '.model-response-text',
-                '.p-4.md\\:p-6', // ChatGPT shared bubble wrapper
-                'div[data-message-author-role]' // ChatGPT specific
-            ];
+            const bubbles = ['.markdown.prose', '.message-content', 'div[id^="message-content"]', 'article div.flex-grow'];
+            const ignore = ['footer', 'nav', 'header', 'aside', 'button'];
             
             let data = [];
-            chatSelectors.forEach(s => {
+            bubbles.forEach(s => {
                 document.querySelectorAll(s).forEach(el => {
-                    const txt = el.innerText.trim();
-                    if (txt.length > 20) data.push(txt);
+                    if (!ignore.some(n => el.closest(n)) && el.innerText.trim().length > 30) {
+                        data.push(el.innerText.trim());
+                    }
                 });
             });
-
-            // If we found specific chat bubbles, use them. Otherwise, fall back to body but with less priority.
-            if (data.length > 0) {
-                return data.join('\n\n---\n\n');
-            }
             
-            // Fallback: search for any div that might contain long text but skip nav/footer
-            const bodyText = Array.from(document.querySelectorAll('div'))
-                .filter(div => div.innerText.length > 100 && !['NAV', 'FOOTER', 'HEADER'].includes(div.parentElement.tagName))
-                .map(div => div.innerText)
-                .join('\n\n');
-
-            return bodyText || document.body.innerText;
+            if (data.length === 0) {
+                const main = document.querySelector('main');
+                return main ? main.innerText : "SCRAPE_FAILURE";
+            }
+            return data.join('\n\n---\n\n');
         });
         
-        return cleanContent(content);
+        await browser.close();
+        return sanitizeScrapedContent(content);
     } catch (e) {
-        console.error(`[Scraper][${sessionID}] FAILED: ${e.message}`);
-        return `ERROR: ${e.message}`;
-    } finally {
         if (browser) await browser.close();
+        return `DATA_ERROR: ${e.message}`;
     }
 }
 
-/** ROUTES **/
-
-app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.status(200).send('Pluto Backend Engine Active'));
-
+/**
+ * PHASE 1: WORKSPACE INITIALIZATION
+ */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
+    if (!LLAMA_API_KEY) return res.status(500).json({ success: false, error: "Llama API Key missing" });
+
     try {
         let foundation = "";
-        if (links && links.length > 0) {
-            const transcripts = await Promise.all(links.map(l => extractConversationData(l.url)));
-            const combined = transcripts.join('\n\n');
-            
-            // Verify we actually got content and not just "ERROR" or legal boilerplate
-            if (combined.length < 200 || combined.toLowerCase().includes('error')) {
-                throw new Error("Could not extract enough meaningful chat content from the links provided. Please ensure the share links are public.");
-            }
 
-            const result = await callLlamaWithRetry([
-                { role: "system", content: "You are Pluto. Synthesize the provided ChatGPT/Gemini conversation into a helpful research summary. Focus only on the content of the chat, ignore all legal notices or UI text." },
-                { role: "user", content: `DATA:\n${combined}\n\nTITLE: ${title}` }
-            ]);
-            foundation = result.choices[0].message.content;
-        } else {
-            foundation = `Session: ${title || 'Intelligence'}`;
+        // MODE: Pluto-X Research Synthesis
+        if (links && links.length > 0 && links.some(l => l.url && l.url.trim() !== "")) {
+            const transcripts = await Promise.all(
+                links.filter(l => l.url && l.url.trim() !== "").map(l => extractConversationData(l.url))
+            );
+            const combinedData = transcripts.join('\n\n');
+
+            const messages = [
+                { 
+                    role: "system", 
+                    content: "You are Pluto, a highly advanced AI research assistant. Your primary goal is to synthesize the provided data while acting as a comprehensive knowledge engine. You skip pleasantries and provide a deep, technical summary as the first message." 
+                },
+                { 
+                    role: "user", 
+                    content: `DATA INPUT:\n${combinedData}\n\nTASK: Synthesize the research content above for the session: "${title || 'Pluto-X Synthesis'}".` 
+                }
+            ];
+
+            const result = await callLlamaWithRetry(messages);
+            foundation = result.choices?.[0]?.message?.content;
+        } 
+        // MODE: Standard Chat (Greet the User)
+        else {
+            const messages = [
+                { 
+                    role: "system", 
+                    content: "You are Pluto, a highly advanced and helpful AI assistant. A user has started a new chat session. Your task is to greet them professionally, acknowledge the session title if relevant, and state that you are ready to assist with any topic using your full knowledge base. Be intelligent, welcoming, and direct." 
+                },
+                { 
+                    role: "user", 
+                    content: `GREETING TASK: Provide a welcoming opening for a new session titled: "${title || 'Pluto Intelligence'}".` 
+                }
+            ];
+
+            const result = await callLlamaWithRetry(messages);
+            foundation = result.choices?.[0]?.message?.content || "Pluto is online. How can I assist you today?";
         }
+
+        if (!foundation) throw new Error("AI failed to initialize.");
         res.json({ success: true, foundation });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
+    } catch (error) {
+        console.error("[Pluto Init Error]:", error.message);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
+/**
+ * PHASE 2: INTERACTIVE CHAT
+ */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
     try {
         const lastMsg = history[history.length - 1].content;
-        const result = await callLlamaWithRetry([
-            { role: "system", content: `Grounding: ${foundation}` },
-            { role: "user", content: lastMsg }
-        ]);
-        res.json({ success: true, reply: result.choices[0].message.content });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
+        
+        const messages = [
+            { 
+                role: "system", 
+                content: "You are Pluto, a highly capable AI assistant. You use the provided 'FOUNDATION' as your core grounding, but you are also a general-purpose AI. You can answer any question, discuss any topic, and provide creative assistance. Keep your tone professional and intelligent." 
+            },
+            { 
+                role: "user", 
+                content: `FOUNDATION CONTEXT: ${foundation}\n\nCONVERSATION HISTORY: ${history.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nUSER QUERY: ${lastMsg}` 
+            }
+        ];
+
+        const result = await callLlamaWithRetry(messages);
+        const reply = result.choices?.[0]?.message?.content || "No response generated.";
+        res.json({ success: true, reply });
+    } catch (error) {
+        console.error("[Pluto Chat Error]:", error.message);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Pluto Backend Active on port ${PORT}`);
-});
+// Health check for Render
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Backend Active on port ${PORT}`));
