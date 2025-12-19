@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: A general-purpose AI assistant capable of research synthesis.
  * Integration: Environment-aware using .env for keys and configurations.
- * Fix: Improved greeting logic for "Standard Chat" (no links) sessions.
+ * Fix: Consolidated robust browser pathing and Llama API integration.
  */
 
 require('dotenv').config();
@@ -80,14 +80,18 @@ function sanitizeScrapedContent(text) {
 
 /**
  * Surgical Scraper for AI Share Links (Gemini & ChatGPT)
- * Updated with Docker-compatible launch arguments
+ * Updated with Docker-compatible launch arguments and explicit pathing.
  */
 async function extractConversationData(url) {
     let browser;
     try {
         console.log(`[Pluto Scraper] Extracting content for: ${url}`);
+        
+        // Define the chrome path based on environment
+        const chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+
         browser = await puppeteer.launch({ 
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            executablePath: chromePath,
             headless: "new", 
             args: [
                 '--no-sandbox', 
@@ -99,6 +103,7 @@ async function extractConversationData(url) {
                 '--incognito'
             ] 
         });
+
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
         
@@ -127,6 +132,7 @@ async function extractConversationData(url) {
         
         return sanitizeScrapedContent(content);
     } catch (e) {
+        console.error(`[Scraper Error]: ${e.message}`);
         return `DATA_ERROR: ${e.message}`;
     } finally {
         if (browser) await browser.close();
@@ -138,7 +144,7 @@ async function extractConversationData(url) {
  */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
-    if (!LLAMA_API_KEY) return res.status(500).json({ success: false, error: "Llama API Key missing in .env" });
+    if (!LLAMA_API_KEY) return res.status(500).json({ success: false, error: "Llama API Key missing in environment" });
 
     try {
         let foundation = "";
@@ -194,6 +200,8 @@ app.post('/api/initialize', async (req, res) => {
  */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
+    if (!LLAMA_API_KEY) return res.status(500).json({ success: false, error: "API Key missing" });
+
     try {
         const lastMsg = history[history.length - 1].content;
         
