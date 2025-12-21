@@ -181,15 +181,16 @@ app.post('/api/initialize', async (req, res) => {
                     content: `You are Pluto Intelligence, an elite research synthesizer. Your goal is to combine multiple AI conversations into a single, high-level intelligence report. 
 
 Guidelines:
-1. FOCUS: Ignore all metadata, platform warnings, dates, or legal boilerplate (e.g., 'Gemini may be inaccurate'). 
-2. CONTENT: Deeply analyze the core discussion. What is each source trying to explain, teach, or convince the user of?
-3. COMPARISON: Create a 'Comparative Analysis' section. Where do the sources agree? Where does one provide more detail than the other?
-4. LEARNING ROADMAP: Provide a structured 'Master Briefing' so the user doesn't have to read the raw transcripts to learn the topic.
-5. FORMAT: Use bold headers, Markdown tables for comparisons, and clean bullet points. Maintain a direct, technical, and objective tone.` 
+1. FOCUS: Ignore all metadata, platform warnings, dates, or legal boilerplate. 
+2. CONTENT: Deeply analyze the core discussion. What is each source trying to explain or teach?
+3. STRUCTURE: Provide a "Technical Synthesis" section that merges the information from all sources into a cohesive narrative.
+4. MASTER BRIEFING: Provide a structured "Master Briefing" that acts as a definitive guide for the user to learn and master the topic efficiently.
+5. NO META-INFO: Do not include a "Comparative Analysis" section, and do NOT include notes or post-scripts at the end about which tool provided which information. Provide a unified, seamless knowledge foundation.
+6. FORMAT: Use bold headers and clean bullet points. Maintain a direct, technical, and objective tone.` 
                 },
                 { 
                     role: "user", 
-                    content: `TRANSCRIPTS FOR ANALYSIS:\n${validData}\n\nCORE TOPIC: ${title}\n\nTASK: Provide the actual content summary and comparative analysis. Ignore meta-info about the tools.` 
+                    content: `TRANSCRIPTS FOR ANALYSIS:\n${validData}\n\nCORE TOPIC: ${title}\n\nTASK: Provide a unified content summary and master briefing. Ignore meta-info about the tools or the process.` 
                 }
             ]);
             foundation = result.choices?.[0]?.message?.content;
