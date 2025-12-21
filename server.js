@@ -178,11 +178,18 @@ app.post('/api/initialize', async (req, res) => {
             const result = await callLlamaWithRetry([
                 { 
                     role: "system", 
-                    content: "You are Pluto Intelligence. Synthesize the provided conversation data into a neat, professional, and highly understandable technical summary. Use Markdown tables, bold headers, and bullet points to make the information digestible. Ignore all legal text or UI elements." 
+                    content: `You are Pluto Intelligence, an elite research synthesizer. Your goal is to combine multiple AI conversations into a single, high-level intelligence report. 
+
+Guidelines:
+1. FOCUS: Ignore all metadata, platform warnings, dates, or legal boilerplate (e.g., 'Gemini may be inaccurate'). 
+2. CONTENT: Deeply analyze the core discussion. What is each source trying to explain, teach, or convince the user of?
+3. COMPARISON: Create a 'Comparative Analysis' section. Where do the sources agree? Where does one provide more detail than the other?
+4. LEARNING ROADMAP: Provide a structured 'Master Briefing' so the user doesn't have to read the raw transcripts to learn the topic.
+5. FORMAT: Use bold headers, Markdown tables for comparisons, and clean bullet points. Maintain a direct, technical, and objective tone.` 
                 },
                 { 
                     role: "user", 
-                    content: `DATA FOR SYNTHESIS:\n${validData}\n\nTOPIC: ${title}` 
+                    content: `TRANSCRIPTS FOR ANALYSIS:\n${validData}\n\nCORE TOPIC: ${title}\n\nTASK: Provide the actual content summary and comparative analysis. Ignore meta-info about the tools.` 
                 }
             ]);
             foundation = result.choices?.[0]?.message?.content;
