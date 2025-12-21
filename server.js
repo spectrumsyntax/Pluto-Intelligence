@@ -1,8 +1,9 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
- * New Feature: Ghost Mode Debugger - Virtual Code Execution Visualizer.
- * Identity: Created by Spectrum SyntaX.
+ * Features: Pluto-X, Ghost Mode Debugger, Standard Chat.
+ * Identity: Developed by Spectrum SyntaX.
+ * Persona: Gen Z Mixed (Locked in, fr, no cap) + Elite Technical Clarity.
  */
 
 require('dotenv').config();
@@ -22,10 +23,14 @@ const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
+// Global browser instance for singleton pattern
 let globalBrowser = null;
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
 
+/**
+ * Concurrency Queue to handle multiple users on Render's RAM limits
+ */
 async function waitForTurn() {
     while (activeScrapes >= MAX_CONCURRENT_SCRAPES) {
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -58,7 +63,7 @@ async function getBrowser() {
 }
 
 /**
- * Scrub legal boilerplate from scraped text
+ * Scrub boilerplate and noise from scraped text
  */
 function sanitizeScrapedContent(text) {
     if (!text) return "";
@@ -70,7 +75,7 @@ function sanitizeScrapedContent(text) {
 }
 
 /**
- * Research Scraper - Optimized for SPA Hydration and Memory
+ * Pluto-X Scraper - Optimized for modern SPA platforms
  */
 async function extractConversationData(url) {
     let page;
@@ -124,6 +129,9 @@ async function extractConversationData(url) {
     }
 }
 
+/**
+ * Standard AI Call Wrapper
+ */
 async function callLlamaWithRetry(messages, isJson = false, retries = 5) {
     const defaultDelays = [1000, 2000, 4000, 8000, 16000];
     for (let i = 0; i < retries; i++) {
@@ -131,11 +139,10 @@ async function callLlamaWithRetry(messages, isJson = false, retries = 5) {
             const body = { 
                 model: LLAMA_MODEL, 
                 messages, 
-                temperature: 0.2,
+                temperature: isJson ? 0.2 : 0.7,
                 max_tokens: 8192 
             };
             
-            // Using system instruction for structured output
             const response = await fetch(LLAMA_API_URL, {
                 method: 'POST',
                 headers: { 
@@ -168,7 +175,7 @@ app.post('/api/debug', async (req, res) => {
             { 
                 role: "system", 
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
-                Trace the following code line-by-line. 
+                Trace the following ${language} code line-by-line. 
                 Return a JSON object with a "steps" array. 
                 Each step MUST have:
                 - line: (number) current line executing
@@ -194,6 +201,9 @@ app.post('/api/debug', async (req, res) => {
     }
 });
 
+/**
+ * INITIALIZATION API (Pluto-X or Standard)
+ */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
     try {
@@ -204,18 +214,31 @@ app.post('/api/initialize', async (req, res) => {
                 if (l.url) transcripts.push(await extractConversationData(l.url));
             }
             const validData = transcripts.filter(t => !t.startsWith("DATA_ERROR")).join('\n\n');
-            if (validData.length < 200) throw new Error("Extraction Failed.");
+            if (validData.length < 200) throw new Error("Extraction Failed. Ensure links are public.");
 
             const result = await callLlamaWithRetry([
                 { 
                     role: "system", 
-                    content: `You are Pluto Intelligence by Spectrum SyntaX. Locked in persona. Technical synthesis. No slang in core briefing. Comparison tables required.` 
+                    content: `You are Pluto Intelligence, an elite research synthesizer developed by Spectrum SyntaX. 
+                    
+                    PERSONA RULES:
+                    1. IDENTITY: You were created by Spectrum SyntaX. No cap.
+                    2. SLANG: Use a Gen Z mix (locked in, fr, vibes, bet, cooking) ONLY for the intro and outro paragraphs. 
+                    3. CONTENT: For the "Technical Synthesis" and "Master Briefing," be 100% professional, crystal-clear, and academic. No slang in the actual explanation.
+                    4. FORMAT: Use bold headers and clean Markdown tables for any comparisons.
+                    5. SOURCE: Synthesize all provided data into one seamless knowledge foundation.` 
                 },
-                { role: "user", content: `DATA:\n${validData}\n\nTOPIC: ${title}` }
+                { role: "user", content: `DATA FOR ANALYSIS:\n${validData}\n\nTOPIC: ${title}\n\nTASK: Give me the briefing. Greet me with vibes, then cook up the pure facts.` }
             ]);
             foundation = result.choices?.[0]?.message?.content;
         } else {
-            const result = await callLlamaWithRetry([{ role: "system", content: "You are Pluto by Spectrum SyntaX. Greet the user Gen Z style. Stay professional for tech." }, { role: "user", content: `TITLE: ${title}` }]);
+            const result = await callLlamaWithRetry([
+                { 
+                    role: "system", 
+                    content: "You are Pluto, developed by Spectrum SyntaX. Greet the user with a major Gen Z mix (e.g., 'Pluto is online and locked in. Ready to cook up some W logic.'). If asked about origins, mention Spectrum SyntaX. Stay professional for actual technical queries." 
+                }, 
+                { role: "user", content: `SESSION TITLE: ${title}` }
+            ]);
             foundation = result.choices?.[0]?.message?.content;
         }
         res.json({ success: true, foundation });
@@ -224,11 +247,23 @@ app.post('/api/initialize', async (req, res) => {
     }
 });
 
+/**
+ * INTERACTIVE CHAT API
+ */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
     try {
         const messages = [
-            { role: "system", content: `You are Pluto Intelligence by Spectrum SyntaX. Created by Spectrum SyntaX. No cap. Technical and grounded in: ${foundation}` },
+            { 
+                role: "system", 
+                content: `You are Pluto Intelligence, an elite AI developed by Spectrum SyntaX. 
+                
+                BEHAVIOR RULES:
+                - IDENTITY: Created by Spectrum SyntaX. No cap. Mention this if asked.
+                - PERSONALITY: You are "locked in." Use Gen Z slang (fr, lowkey, bet, vibes, cooking) naturally for greetings, transitions, or small talk.
+                - CLARITY: When explaining a concept or grounding in the foundation, use professional, high-IQ language.
+                - CONTEXT: You are grounded in this knowledge base: \n\n${foundation}` 
+            },
             ...history
         ];
         const result = await callLlamaWithRetry(messages);
