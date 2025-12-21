@@ -77,7 +77,7 @@ async function callLlamaWithRetry(messages, retries = 5) {
 function sanitizeScrapedContent(text) {
     if (!text) return "";
     return text
-        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation|By messaging ChatGPT|Check important info|Sign in|Google|Explore our other|Try Gemini|Try ChatGPT|Verify you are human/gi, "")
+        .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation|By messaging ChatGPT|Check important info|Sign in|Explore our other|Try Gemini|Try ChatGPT|Verify you are human/gi, "")
         .replace(/[^\x20-\x7E\n]/g, " ") 
         .trim()
         .substring(0, 18000);
@@ -107,10 +107,28 @@ async function extractConversationData(url) {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Use networkidle2 for better hydration tracking
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Hard wait for JS-heavy AI bubbles to render
-        await new Promise(r => setTimeout(r, 12000));
+        // Auto-scroll to trigger lazy-loaded messages
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                let totalHeight = 0;
+                let distance = 100;
+                let timer = setInterval(() => {
+                    let scrollHeight = document.body.scrollHeight;
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if(totalHeight >= scrollHeight){
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 100);
+            });
+        });
+
+        // Final wait for UI stabilization
+        await new Promise(r => setTimeout(r, 5000));
 
         const result = await page.evaluate(() => {
             const selectors = [
@@ -122,6 +140,7 @@ async function extractConversationData(url) {
                 '.p-4.md\\:p-6',
                 '.conversation-container',
                 'div[class*="message"]',
+                'div[class*="content"]',
                 'main' 
             ];
             
@@ -129,7 +148,8 @@ async function extractConversationData(url) {
             selectors.forEach(s => {
                 document.querySelectorAll(s).forEach(el => {
                     const txt = el.innerText.trim();
-                    if (txt.length > 50) data.push(txt);
+                    // Increased threshold to avoid small UI buttons
+                    if (txt.length > 60) data.push(txt);
                 });
             });
             
@@ -142,8 +162,8 @@ async function extractConversationData(url) {
         await browser.close();
         const final = sanitizeScrapedContent(result.content);
         
-        if (final.length < 200) {
-            return `DATA_ERROR: Failed to extract meaningful content from "${result.title}". Link might be private or blocked.`;
+        if (final.length < 150) {
+            return `DATA_ERROR: Could not find content bubbles on "${result.title}". The link might be expired or the layout has changed.`;
         }
         
         return `[SOURCE: ${result.title}]\n\n${final}`;
@@ -171,14 +191,16 @@ app.post('/api/initialize', async (req, res) => {
             
             const validData = transcripts.filter(t => !t.startsWith("DATA_ERROR")).join('\n\n');
 
-            if (validData.length < 300) {
-                throw new Error("Could not extract enough data from links. Ensure they are public share links.");
+            if (validData.length < 200) {
+                // If we failed, let's provide more detailed feedback from the first failed transcript
+                const errorLog = transcripts.find(t => t.startsWith("DATA_ERROR")) || "No content found.";
+                throw new Error(`Extraction Failed: ${errorLog}`);
             }
 
             const result = await callLlamaWithRetry([
                 { 
                     role: "system", 
-                    content: `You are Pluto Intelligence, an elite research synthesizer. You were created by Spectrum SyntaX. Your goal is to combine multiple AI conversations into a single, high-level intelligence report. 
+                    content: `You are Pluto Intelligence, an elite research synthesizer created by Spectrum SyntaX. Your goal is to combine multiple AI conversations into a single, high-level intelligence report. 
 
 Guidelines:
 1. IDENTITY: If asked who made you or created you, explicitly state that you were developed by Spectrum SyntaX.
@@ -186,7 +208,7 @@ Guidelines:
 3. CONTENT: Deeply analyze the core discussion. What is each source trying to explain or teach?
 4. STRUCTURE: Provide a "Technical Synthesis" section that merges the information from all sources into a cohesive narrative.
 5. MASTER BRIEFING: Provide a structured "Master Briefing" that acts as a definitive guide for the user to learn and master the topic efficiently.
-6. NO META-INFO: Do not include a "Comparative Analysis" section, and do NOT include notes or post-scripts at the end about which tool provided which information. Provide a unified, seamless knowledge foundation.
+6. NO META-INFO: Do not include a "Comparative Analysis" section, and do NOT include notes or post-scripts at the end. Provide a unified, seamless knowledge foundation.
 7. FORMAT: Use bold headers and clean bullet points. Maintain a direct, technical, and objective tone.` 
                 },
                 { 
@@ -213,6 +235,7 @@ Guidelines:
         
         res.json({ success: true, foundation });
     } catch (error) {
+        console.error(`[Pluto Error] ${error.message}`);
         res.status(500).json({ success: false, error: error.message });
     }
 });
