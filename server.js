@@ -1,7 +1,7 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
- * Purpose: A general-purpose AI assistant capable of research synthesis.
- * Fix: Relaxed validation to allow content with legal footers and improved selectors.
+ * Purpose: General-purpose AI Research & Synthesis Engine.
+ * Logic: Scrapes AI share links, synthesizes context, and enables interactive chat.
  */
 
 require('dotenv').config();
@@ -21,6 +21,9 @@ const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
+/**
+ * Resolve Chrome Path for Render/Docker environment
+ */
 function resolveChromePath() {
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
         return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -34,6 +37,9 @@ function resolveChromePath() {
     return dockerPath;
 }
 
+/**
+ * AI Call with Exponential Backoff
+ */
 async function callLlamaWithRetry(messages, retries = 5) {
     const defaultDelays = [1000, 2000, 4000, 8000, 16000];
     for (let i = 0; i < retries; i++) {
@@ -44,7 +50,12 @@ async function callLlamaWithRetry(messages, retries = 5) {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${LLAMA_API_KEY}`
                 },
-                body: JSON.stringify({ model: LLAMA_MODEL, messages, temperature: 0.7, max_tokens: 8192 })
+                body: JSON.stringify({ 
+                    model: LLAMA_MODEL, 
+                    messages, 
+                    temperature: 0.7, 
+                    max_tokens: 8192 
+                })
             });
             const result = await response.json();
             if ((response.status === 429 || response.status === 503) && i < retries - 1) {
@@ -61,7 +72,7 @@ async function callLlamaWithRetry(messages, retries = 5) {
 }
 
 /**
- * Enhanced cleaning to remove legal noise specifically from Gemini/ChatGPT
+ * Scrub legal boilerplate from scraped text
  */
 function sanitizeScrapedContent(text) {
     if (!text) return "";
@@ -69,17 +80,17 @@ function sanitizeScrapedContent(text) {
         .replace(/Terms of Service|Privacy Policy|Cookie Preferences|Report conversation|By messaging ChatGPT|Check important info|Sign in|Google|Explore our other|Try Gemini|Try ChatGPT|Verify you are human/gi, "")
         .replace(/[^\x20-\x7E\n]/g, " ") 
         .trim()
-        .substring(0, 15000);
+        .substring(0, 18000);
 }
 
 /**
- * Surgical Scraper - Optimized for SPA (Single Page App) Hydration
+ * Aggressive SPA Scraper for AI Platforms
  */
 async function extractConversationData(url) {
     let browser;
     try {
         const chromePath = resolveChromePath();
-        console.log(`[Pluto Scraper] Targeting AI Link: ${url}`);
+        console.log(`[Pluto Scraper] Extracting Link: ${url}`);
         
         browser = await puppeteer.launch({ 
             executablePath: chromePath,
@@ -89,22 +100,19 @@ async function extractConversationData(url) {
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage', 
                 '--no-zygote', 
-                '--single-process',
-                '--window-size=1920,1080'
+                '--single-process'
             ] 
         });
 
         const page = await browser.newPage();
-        // Set a more modern desktop user agent to avoid being flagged as a bot
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        // Wait for page load
-        await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         
-        // Extra time for AI content to render bubbles after the network is idle
-        await new Promise(r => setTimeout(r, 10000));
+        // Hard wait for JS-heavy AI bubbles to render
+        await new Promise(r => setTimeout(r, 12000));
 
-        const content = await page.evaluate(() => {
+        const result = await page.evaluate(() => {
             const selectors = [
                 '.markdown', 
                 '.message-content', 
@@ -113,84 +121,109 @@ async function extractConversationData(url) {
                 'article',
                 '.p-4.md\\:p-6',
                 '.conversation-container',
-                'main' // Ultimate fallback
+                'div[class*="message"]',
+                'main' 
             ];
             
             let data = [];
             selectors.forEach(s => {
                 document.querySelectorAll(s).forEach(el => {
                     const txt = el.innerText.trim();
-                    // Increased length check to ensure we grab real sentences
-                    if (txt.length > 60) data.push(txt);
+                    if (txt.length > 50) data.push(txt);
                 });
             });
             
-            if (data.length === 0) {
-                return "SCRAPE_FAILURE: No substantial content bubbles detected.";
-            }
-            return data.join('\n\n---\n\n');
+            return {
+                content: data.join('\n\n---\n\n'),
+                title: document.title
+            };
         });
         
         await browser.close();
+        const final = sanitizeScrapedContent(result.content);
         
-        const final = sanitizeScrapedContent(content);
-        
-        // Relaxed validation: Just check if we actually found substantial text
-        // (Removing the check for "terms of service" because it exists in the footer of successful pages)
-        if (final.length < 350 || final.includes("SCRAPE_FAILURE")) {
-            console.error(`[Pluto Scraper] Insufficient content found for ${url}. Length: ${final.length}`);
-            return "DATA_ERROR: Failed to extract meaningful content from the page.";
+        if (final.length < 200) {
+            return `DATA_ERROR: Failed to extract meaningful content from "${result.title}". Link might be private or blocked.`;
         }
         
-        return final;
+        return `[SOURCE: ${result.title}]\n\n${final}`;
     } catch (e) {
         if (browser) await browser.close();
         return `DATA_ERROR: ${e.message}`;
     }
 }
 
+/**
+ * API: Initialize Session (Standard or Research)
+ */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
+    console.log(`[Pluto] Init: ${title}`);
+    
     try {
         let foundation = "";
+        
+        // Research Mode
         if (links && links.length > 0) {
             const transcripts = await Promise.all(
                 links.filter(l => l.url).map(l => extractConversationData(l.url))
             );
             
-            // Filter out individual data errors but try to keep what worked
-            const validTranscripts = transcripts.filter(t => !t.startsWith("DATA_ERROR"));
-            const combinedData = validTranscripts.join('\n\n');
+            const validData = transcripts.filter(t => !t.startsWith("DATA_ERROR")).join('\n\n');
 
-            if (combinedData.length < 400) {
-                throw new Error("Pluto could not extract enough meaningful chat content from the links. Please ensure the links are set to 'Public' and contain text-based conversation.");
+            if (validData.length < 300) {
+                throw new Error("Could not extract enough data from links. Ensure they are public share links.");
             }
 
             const result = await callLlamaWithRetry([
-                { role: "system", content: "You are Pluto. Synthesize the research data into a technical summary. IGNORE legal notices, login prompts, and UI buttons. Focus ONLY on the actual conversation content." },
-                { role: "user", content: `DATA:\n${combinedData}\n\nTASK: Synthesize for: "${title}"` }
+                { 
+                    role: "system", 
+                    content: "You are Pluto Intelligence. Synthesize the provided conversation data into a neat, professional, and highly understandable technical summary. Use Markdown tables, bold headers, and bullet points to make the information digestible. Ignore all legal text or UI elements." 
+                },
+                { 
+                    role: "user", 
+                    content: `DATA FOR SYNTHESIS:\n${validData}\n\nTOPIC: ${title}` 
+                }
             ]);
             foundation = result.choices?.[0]?.message?.content;
-        } else {
+        } 
+        // Standard Chat Mode
+        else {
             const result = await callLlamaWithRetry([
-                { role: "system", content: "Greet the user to a new session." },
-                { role: "user", content: `Title: ${title}` }
+                { 
+                    role: "system", 
+                    content: "You are Pluto, an advanced AI knowledge engine. Greet the user to their new session professionally. State that you are online and ready to assist with any topic or query." 
+                },
+                { 
+                    role: "user", 
+                    content: `SESSION TITLE: ${title}` 
+                }
             ]);
             foundation = result.choices?.[0]?.message?.content;
         }
+        
         res.json({ success: true, foundation });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+/**
+ * API: Interactive Chat
+ */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
     try {
         const lastMsg = history[history.length - 1].content;
         const result = await callLlamaWithRetry([
-            { role: "system", content: `Context: ${foundation}` },
-            { role: "user", content: lastMsg }
+            { 
+                role: "system", 
+                content: `You are Pluto Intelligence. Ground your responses in the following knowledge foundation: \n\n${foundation}\n\nBe intelligent, direct, and professional.` 
+            },
+            { 
+                role: "user", 
+                content: lastMsg 
+            }
         ]);
         res.json({ success: true, reply: result.choices?.[0]?.message?.content });
     } catch (error) {
