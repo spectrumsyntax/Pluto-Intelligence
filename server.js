@@ -2,6 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
  * Logic: Scrapes AI share links, synthesizes context, and enables interactive chat.
+ * Concurrency Fix: Implemented Singleton Browser pattern to handle multiple users simultaneously.
  */
 
 require('dotenv').config();
@@ -21,6 +22,9 @@ const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
+// Global browser instance for concurrency management
+let globalBrowser = null;
+
 /**
  * Resolve Chrome Path for Render/Docker environment
  */
@@ -35,6 +39,29 @@ function resolveChromePath() {
         if (dynamicPath && fs.existsSync(dynamicPath)) return dynamicPath;
     } catch (e) {}
     return dockerPath;
+}
+
+/**
+ * Get or launch the shared browser instance.
+ * This ensures that multiple users share one browser process (saving RAM).
+ */
+async function getBrowser() {
+    if (globalBrowser && globalBrowser.isConnected()) {
+        return globalBrowser;
+    }
+    const chromePath = resolveChromePath();
+    globalBrowser = await puppeteer.launch({ 
+        executablePath: chromePath,
+        headless: "new", 
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage', 
+            '--no-zygote', 
+            '--single-process'
+        ] 
+    });
+    return globalBrowser;
 }
 
 /**
@@ -84,30 +111,18 @@ function sanitizeScrapedContent(text) {
 }
 
 /**
- * Aggressive SPA Scraper for AI Platforms
+ * Surgical Scraper - Uses browser tabs for concurrency efficiency
  */
 async function extractConversationData(url) {
-    let browser;
+    let page;
     try {
-        const chromePath = resolveChromePath();
-        console.log(`[Pluto Scraper] Extracting Link: ${url}`);
+        const browser = await getBrowser();
+        console.log(`[Pluto Scraper] Opening tab for: ${url}`);
         
-        browser = await puppeteer.launch({ 
-            executablePath: chromePath,
-            headless: "new", 
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', 
-                '--no-zygote', 
-                '--single-process'
-            ] 
-        });
-
-        const page = await browser.newPage();
+        // Open a new tab (page) instead of a new browser
+        page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        // Use networkidle2 for better hydration tracking
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
         // Auto-scroll to trigger lazy-loaded messages
@@ -127,28 +142,19 @@ async function extractConversationData(url) {
             });
         });
 
-        // Final wait for UI stabilization
         await new Promise(r => setTimeout(r, 5000));
 
         const result = await page.evaluate(() => {
             const selectors = [
-                '.markdown', 
-                '.message-content', 
-                '.model-response-text',
-                'div[data-message-author-role]',
-                'article',
-                '.p-4.md\\:p-6',
-                '.conversation-container',
-                'div[class*="message"]',
-                'div[class*="content"]',
-                'main' 
+                '.markdown', '.message-content', '.model-response-text',
+                'div[data-message-author-role]', 'article', '.p-4.md\\:p-6',
+                '.conversation-container', 'div[class*="message"]', 'div[class*="content"]', 'main' 
             ];
             
             let data = [];
             selectors.forEach(s => {
                 document.querySelectorAll(s).forEach(el => {
                     const txt = el.innerText.trim();
-                    // Increased threshold to avoid small UI buttons
                     if (txt.length > 60) data.push(txt);
                 });
             });
@@ -159,16 +165,16 @@ async function extractConversationData(url) {
             };
         });
         
-        await browser.close();
+        await page.close(); // Close the tab, but keep browser running
         const final = sanitizeScrapedContent(result.content);
         
         if (final.length < 150) {
-            return `DATA_ERROR: Could not find content bubbles on "${result.title}". The link might be expired or the layout has changed.`;
+            return `DATA_ERROR: Could not find content bubbles on "${result.title}".`;
         }
         
         return `[SOURCE: ${result.title}]\n\n${final}`;
     } catch (e) {
-        if (browser) await browser.close();
+        if (page) await page.close();
         return `DATA_ERROR: ${e.message}`;
     }
 }
@@ -178,12 +184,11 @@ async function extractConversationData(url) {
  */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
-    console.log(`[Pluto] Init: ${title}`);
+    console.log(`[Pluto] Init Session: ${title}`);
     
     try {
         let foundation = "";
         
-        // Research Mode
         if (links && links.length > 0) {
             const transcripts = await Promise.all(
                 links.filter(l => l.url).map(l => extractConversationData(l.url))
@@ -204,23 +209,22 @@ app.post('/api/initialize', async (req, res) => {
 Guidelines:
 1. IDENTITY: You were created by Spectrum SyntaX. No cap.
 2. PERSONALITY: Use a subtle Gen Z mix (phrases like "locked in," "cook," or "W logic") ONLY for the introductory or concluding remarks. 
-3. TECHNICAL CLARITY: For the actual "Technical Synthesis" and "Master Briefing," you must drop all slang. Use high-level, clear, academic, and professional English. The user must be able to understand complex topics without any slang-induced confusion.
+3. TECHNICAL CLARITY: For the actual "Technical Synthesis" and "Master Briefing," you must drop all slang. Use high-level, clear, academic, and professional English. 
 4. FOCUS: Ignore all metadata, platform warnings, or boilerplate. 
-5. FORMAT: Use bold headers and clean bullet points. When comparing features, data structures, or concepts, ALWAYS use clean, well-formatted Markdown tables. Ensure tables have clear headers and aligned columns. Keep it direct and elite.` 
+5. FORMAT: Use bold headers and clean bullet points. ALWAYS use clean Markdown tables for comparisons.` 
                 },
                 { 
                     role: "user", 
-                    content: `TRANSCRIPTS FOR ANALYSIS:\n${validData}\n\nCORE TOPIC: ${title}\n\nTASK: Synthesize the knowledge. Greet me with vibes, but make the explanation technical and pure. Include a clear comparison table if the data allows for it.` 
+                    content: `TRANSCRIPTS FOR ANALYSIS:\n${validData}\n\nCORE TOPIC: ${title}\n\nTASK: Synthesize the knowledge and include a clear comparison table.` 
                 }
             ]);
             foundation = result.choices?.[0]?.message?.content;
         } 
-        // Standard Chat Mode
         else {
             const result = await callLlamaWithRetry([
                 { 
                     role: "system", 
-                    content: "You are Pluto, an advanced AI knowledge engine developed by Spectrum SyntaX. Greet the user with a Gen Z mix (e.g., 'locked in', 'ready to cook'). However, ensure that any actual explanations of topics are purely professional and clear. If asked about your origins, mention Spectrum SyntaX." 
+                    content: "You are Pluto, an advanced AI knowledge engine developed by Spectrum SyntaX. Greet the user with a Gen Z mix (e.g., 'locked in', 'ready to cook'). If asked about your origins, mention Spectrum SyntaX. Ensure technical explanations are professional." 
                 },
                 { 
                     role: "user", 
@@ -247,12 +251,7 @@ app.post('/api/chat', async (req, res) => {
         const result = await callLlamaWithRetry([
             { 
                 role: "system", 
-                content: `You are Pluto Intelligence, an AI developed by Spectrum SyntaX. 
-                
-Persona Rules:
-1. Use Gen Z slang (fr, lowkey, bet, vibes) ONLY for casual transitions or greetings.
-2. EXPLANATION RULE: When explaining a topic, providing facts, or discussing the 'KNOWLEDGE FOUNDATION', you must use crystal-clear, professional language. Use Markdown tables for clear comparisons. No slang is permitted in the core content of an explanation.
-3. If asked about your creator, it's Spectrum SyntaX. No cap.` 
+                content: `You are Pluto Intelligence, an AI developed by Spectrum SyntaX. Ground your responses in the foundation: \n\n${foundation}\n\nPersona: Gen Z slang for vibes/greetings only. Professional for content. Mention Spectrum SyntaX if asked about origins.` 
             },
             { 
                 role: "user", 
