@@ -1,8 +1,8 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
- * Logic: Scrapes AI share links, synthesizes context, and enables interactive chat.
- * Fix: Enabled full conversation memory so Pluto remembers previous messages in a session.
+ * New Feature: Ghost Mode Debugger - Virtual Code Execution Visualizer.
+ * Identity: Created by Spectrum SyntaX.
  */
 
 require('dotenv').config();
@@ -22,12 +22,7 @@ const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_MODEL = process.env.LLAMA_MODEL || "llama-3.3-70b-versatile";
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
-// Global browser instance
 let globalBrowser = null;
-
-/**
- * CONCURRENCY QUEUE LOGIC
- */
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
 
@@ -38,9 +33,6 @@ async function waitForTurn() {
     activeScrapes++;
 }
 
-/**
- * Resolve Chrome Path
- */
 function resolveChromePath() {
     if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
         return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -54,53 +46,20 @@ function resolveChromePath() {
     return dockerPath;
 }
 
-/**
- * Shared browser instance
- */
 async function getBrowser() {
-    if (globalBrowser && globalBrowser.isConnected()) {
-        return globalBrowser;
-    }
+    if (globalBrowser && globalBrowser.isConnected()) return globalBrowser;
     const chromePath = resolveChromePath();
     globalBrowser = await puppeteer.launch({ 
         executablePath: chromePath,
         headless: "new", 
-        args: [
-            '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote', '--single-process', '--disable-gpu'
-        ] 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote', '--single-process', '--disable-gpu'] 
     });
     return globalBrowser;
 }
 
 /**
- * AI Call logic
+ * Scrub legal boilerplate from scraped text
  */
-async function callLlamaWithRetry(messages, retries = 5) {
-    const defaultDelays = [1000, 2000, 4000, 8000, 16000];
-    for (let i = 0; i < retries; i++) {
-        try {
-            const response = await fetch(LLAMA_API_URL, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${LLAMA_API_KEY}`
-                },
-                body: JSON.stringify({ model: LLAMA_MODEL, messages, temperature: 0.7, max_tokens: 8192 })
-            });
-            const result = await response.json();
-            if ((response.status === 429 || response.status === 503) && i < retries - 1) {
-                await new Promise(res => setTimeout(res, defaultDelays[i]));
-                continue;
-            }
-            if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
-            return result;
-        } catch (err) {
-            if (i === retries - 1) throw err;
-            await new Promise(res => setTimeout(res, defaultDelays[i]));
-        }
-    }
-}
-
 function sanitizeScrapedContent(text) {
     if (!text) return "";
     return text
@@ -111,7 +70,7 @@ function sanitizeScrapedContent(text) {
 }
 
 /**
- * Scraper Logic
+ * Research Scraper - Optimized for SPA Hydration and Memory
  */
 async function extractConversationData(url) {
     let page;
@@ -165,9 +124,76 @@ async function extractConversationData(url) {
     }
 }
 
+async function callLlamaWithRetry(messages, isJson = false, retries = 5) {
+    const defaultDelays = [1000, 2000, 4000, 8000, 16000];
+    for (let i = 0; i < retries; i++) {
+        try {
+            const body = { 
+                model: LLAMA_MODEL, 
+                messages, 
+                temperature: 0.2,
+                max_tokens: 8192 
+            };
+            
+            // Using system instruction for structured output
+            const response = await fetch(LLAMA_API_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${LLAMA_API_KEY}`
+                },
+                body: JSON.stringify(body)
+            });
+            const result = await response.json();
+            if ((response.status === 429 || response.status === 503) && i < retries - 1) {
+                await new Promise(res => setTimeout(res, defaultDelays[i]));
+                continue;
+            }
+            if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
+            return result;
+        } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(res => setTimeout(res, defaultDelays[i]));
+        }
+    }
+}
+
 /**
- * API: Initialize Session
+ * GHOST MODE DEBUGGER API
  */
+app.post('/api/debug', async (req, res) => {
+    const { code, language } = req.body;
+    try {
+        const result = await callLlamaWithRetry([
+            { 
+                role: "system", 
+                content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
+                Trace the following code line-by-line. 
+                Return a JSON object with a "steps" array. 
+                Each step MUST have:
+                - line: (number) current line executing
+                - code: (string) the code snippet of that line
+                - memory: (object) current variable states
+                - stack: (array) function names currently in the stack
+                - event: (string) "variable_move" | "loop_cycle" | "func_call" | "error_flash" | "normal"
+                - commentary: (string) short explanation of what happened.
+                - error: (string|null) if an error occurs at this step.
+                Ensure the output is strictly valid JSON.` 
+            },
+            { 
+                role: "user", 
+                content: `LANGUAGE: ${language}\nCODE:\n${code}` 
+            }
+        ], true);
+
+        const content = result.choices?.[0]?.message?.content;
+        const trace = JSON.parse(content.substring(content.indexOf('{'), content.lastIndexOf('}') + 1));
+        res.json({ success: true, trace });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
     try {
@@ -178,27 +204,18 @@ app.post('/api/initialize', async (req, res) => {
                 if (l.url) transcripts.push(await extractConversationData(l.url));
             }
             const validData = transcripts.filter(t => !t.startsWith("DATA_ERROR")).join('\n\n');
-
-            if (validData.length < 200) { throw new Error("Extraction Failed."); }
+            if (validData.length < 200) throw new Error("Extraction Failed.");
 
             const result = await callLlamaWithRetry([
                 { 
                     role: "system", 
-                    content: `You are Pluto Intelligence, developed by Spectrum SyntaX. 
-                    Guidelines: Use Gen Z vibes for intro/outro only. Technical clarity for content. No cap. Mention Spectrum SyntaX if asked who made you.` 
+                    content: `You are Pluto Intelligence by Spectrum SyntaX. Locked in persona. Technical synthesis. No slang in core briefing. Comparison tables required.` 
                 },
-                { 
-                    role: "user", 
-                    content: `DATA:\n${validData}\n\nTOPIC: ${title}\n\nTASK: Provide a unified content summary and master briefing.` 
-                }
+                { role: "user", content: `DATA:\n${validData}\n\nTOPIC: ${title}` }
             ]);
             foundation = result.choices?.[0]?.message?.content;
-        } 
-        else {
-            const result = await callLlamaWithRetry([
-                { role: "system", content: "You are Pluto, developed by Spectrum SyntaX. Greet the user with Gen Z vibes (locked in). Professional for tech queries." },
-                { role: "user", content: `SESSION TITLE: ${title}` }
-            ]);
+        } else {
+            const result = await callLlamaWithRetry([{ role: "system", content: "You are Pluto by Spectrum SyntaX. Greet the user Gen Z style. Stay professional for tech." }, { role: "user", content: `TITLE: ${title}` }]);
             foundation = result.choices?.[0]?.message?.content;
         }
         res.json({ success: true, foundation });
@@ -207,30 +224,16 @@ app.post('/api/initialize', async (req, res) => {
     }
 });
 
-/**
- * API: Continuous Interactive Chat
- * FIX: Now uses the full 'history' array instead of just the 'lastMsg'.
- */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
     try {
-        // Build the full context messages
         const messages = [
-            { 
-                role: "system", 
-                content: `You are Pluto Intelligence, an elite AI developed by Spectrum SyntaX. 
-                - Identity: Created by Spectrum SyntaX. No cap.
-                - Persona: Use Gen Z slang (fr, lowkey, vibes, bet) ONLY for transitions and greetings. 
-                - Professionalism: Stay technical and crystal-clear for all explanations. 
-                - Context: You are grounded in this Technical Synthesis: \n\n${foundation}` 
-            },
-            ...history // Spread the entire conversation history into the API call
+            { role: "system", content: `You are Pluto Intelligence by Spectrum SyntaX. Created by Spectrum SyntaX. No cap. Technical and grounded in: ${foundation}` },
+            ...history
         ];
-
         const result = await callLlamaWithRetry(messages);
         res.json({ success: true, reply: result.choices?.[0]?.message?.content });
     } catch (error) {
-        console.error(`[Pluto Error] ${error.message}`);
         res.status(500).json({ success: false, error: error.message });
     }
 });
