@@ -21,17 +21,25 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// API KEY POOL: Supports a single key or a comma-separated list (e.g., "key1,key2,key3")
+/**
+ * API KEY POOL
+ * Supports multiple accounts. Provide as: "key_acc1, key_acc2, key_acc3" in your env.
+ * The system will exhaust ALL keys for the best model before falling back.
+ */
 const API_KEYS = (process.env.LLAMA_API_KEY || "").split(',').map(k => k.trim()).filter(k => k);
 let currentKeyIndex = 0;
 
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
-// TRIPLE MODEL CONFIGURATION (Failover Chain)
+/**
+ * INTELLIGENCE TIERS (Triple-Model Failover)
+ * Tier 1: Primary goal. We use all keys here first.
+ * Tier 2/3: Emergency bunkers if Groq 70b servers are down or all accounts maxed.
+ */
 const MODELS = [
-    "llama-3.3-70b-versatile", // Tier 1: Max Intelligence
-    "llama3-70b-8192",         // Tier 2: Mid-tier Logic
-    "llama3-8b-8192"           // Tier 3: High Throughput Safety Net
+    "llama-3.3-70b-versatile", // Tier 1: Max Intelligence (Priority)
+    "llama3-70b-8192",         // Tier 2: Mid-tier Logic (Backup Server Cluster)
+    "llama3-8b-8192"           // Tier 3: Ultimate Reliability (Emergency Net)
 ];
 
 // Global browser instance for singleton pattern (Crucial for Render RAM limits)
@@ -147,15 +155,16 @@ async function extractConversationData(url) {
 }
 
 /**
- * Enhanced AI Call with Key Rotation & Triple-Model Failover
- * 1. Tries Current Key with Current Model.
- * 2. If 429: Rotates Key and retries Current Model.
- * 3. If All Keys exhausted: Swaps to Next Model and resets key index.
+ * callLlamaSmart: The Failover Core
+ * logic:
+ * 1. Takes the first model (70b).
+ * 2. Tries Key 1. If Rate Limit -> Tries Key 2.
+ * 3. Only if ALL keys are rate-limited on the 70b, it moves to the next model.
  */
 async function callLlamaSmart(messages, isJson = false) {
     const rotateKey = () => {
         currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-        console.log(`🔑 Rotating to API Key Index: ${currentKeyIndex}`);
+        console.log(`🔑 Rotating to Account Key Index: ${currentKeyIndex}`);
     };
 
     const tryModelWithRotation = async (modelName) => {
@@ -176,39 +185,41 @@ async function callLlamaSmart(messages, isJson = false) {
                 });
                 const result = await response.json();
                 
+                // If it's a rate limit error, switch keys and try again
                 if (response.status === 429 || (result.error && result.error.type === 'rate_limit_reached')) {
-                    console.warn(`⚠️ Key ${currentKeyIndex} rate limited on ${modelName}.`);
+                    console.warn(`⚠️ Account Key ${currentKeyIndex} hit limit on ${modelName}. Rotating...`);
                     rotateKey();
                     keysTriedForThisModel++;
-                    continue; // Try next key
+                    continue; 
                 }
 
                 if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
                 return result;
             } catch (err) {
-                if (err.message.includes("fetch")) throw err; // Network error
+                // If it's a network error, we still try the next key
+                if (err.message.includes("fetch")) throw err; 
                 rotateKey();
                 keysTriedForThisModel++;
             }
         }
-        throw { name: "AllKeysExhausted", message: `All keys rate limited for ${modelName}` };
+        throw { name: "AllKeysExhausted", message: `All account keys exhausted for ${modelName}` };
     };
 
     let lastError = null;
     for (const modelName of MODELS) {
         try {
-            console.log(`🚀 Attempting request with ${modelName}...`);
+            console.log(`🚀 Requesting logic with ${modelName}...`);
             return await tryModelWithRotation(modelName);
         } catch (error) {
             lastError = error;
             if (error.name === "AllKeysExhausted") {
-                console.warn(`🚨 Model ${modelName} fully exhausted across all keys. Moving to next model tier...`);
+                console.warn(`🚨 Intelligence Tier ${modelName} fully exhausted across all accounts. Moving to safety tier...`);
                 continue; 
             }
-            console.error(`❌ Non-rate-limit error with ${modelName}: ${error.message}`);
+            console.error(`❌ System error with ${modelName}: ${error.message}`);
         }
     }
-    throw new Error(`CRITICAL: All models and all API keys exhausted. Last error: ${lastError?.message}`);
+    throw new Error(`CRITICAL: Every account and every fallback model has hit its limit. Pluto is offline until reset. fr.`);
 }
 
 /**
@@ -293,4 +304,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Key Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Account Failover Backend Active on port ${PORT}`));
