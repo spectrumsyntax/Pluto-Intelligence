@@ -238,9 +238,6 @@ async function callLlamaSmart(messages, isJson = false) {
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
 
-    // --- NEW DYNAMIC RULES LOGIC ---
-    // If language is C, we trigger the "Total Lockdown" rules you requested.
-    // For other languages, we keep the original logic to avoid messing them up.
     const accuracyRules = language === 'c' ? `
         CRITICAL ACCURACY RULES (C-SPECIFIC LOCKDOWN):
         1. You are a physical line-by-line scanner. 
@@ -252,27 +249,28 @@ app.post('/api/debug', async (req, res) => {
            - If the line is EMPTY -> Commentary: "Empty line / Whitespace."
            - If the line is a COMMENT -> Commentary: "Code documentation/comment."
         5. DO NOT EXPLAIN THE NEXT LINE'S LOGIC ON A BRACKET LINE. Wait until you physically reach that line number.
-        6. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps (like a loop).
+        6. MEMORY PERSISTENCE: The "memory" object MUST contain the full, current state of ALL variables in scope. Even on bracket or empty lines, you MUST list all variables and their current values. NEVER send an empty {} if variables have been defined earlier.
+        7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps (like a loop).
     ` : `
         CRITICAL ACCURACY RULES:
         1. Point EXACTLY to the code line where logic happens.
         2. Include EVERY physical line number exactly as it appears in the provided source code.
         3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
         4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
-        5. Every step MUST include: 
+        5. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all variables. Do not send {} on bracket steps.
+        6. Every step MUST include: 
            - "line": (integer) The EXACT physical line number.
            - "memory": (object) Current variable states. Use {} if empty. NEVER leave as undefined.
            - "commentary": (string) Technical explanation.
            - "analogy": (string) A real-world ELI5 comparison.
-        6. If code involves pointers or nodes, represent them as strings like "Node(5)".
-        7. Do NOT skip logic milestones. Trace accurately for beginners.
+        7. If code involves pointers or nodes, represent them as strings like "Node(5)".
+        8. Do NOT skip logic milestones. Trace accurately for beginners.
     `;
 
     try {
         const result = await callLlamaSmart([
             { 
                 role: "system", 
-                // We integrate the dynamic accuracy rules directly into the system prompt here
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
                 Trace the provided ${language} code line-by-line. 
                 Return strictly a JSON object with a "steps" array.
