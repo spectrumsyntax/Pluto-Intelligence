@@ -171,10 +171,6 @@ function extractJSON(text) {
 
 /**
  * callLlamaSmart: The Ultimate Failover Core
- * logic:
- * 1. Takes the first model (70b).
- * 2. Tries Key 1. If Rate Limit -> Tries Key 2.
- * 3. Only if ALL keys are rate-limited on the current model, it moves to the next model tier.
  */
 async function callLlamaSmart(messages, isJson = false) {
     const rotateKey = () => {
@@ -237,30 +233,51 @@ async function callLlamaSmart(messages, isJson = false) {
 
 /**
  * GHOST MODE DEBUGGER API
- * Feature: Elite Simplicity 3.0 + ML support.
+ * Feature: Elite Simplicity 3.0 + ML support + Language Specific Lockdown.
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
+
+    // --- NEW DYNAMIC RULES LOGIC ---
+    // If language is C, we trigger the "Total Lockdown" rules you requested.
+    // For other languages, we keep the original logic to avoid messing them up.
+    const accuracyRules = language === 'c' ? `
+        CRITICAL ACCURACY RULES (C-SPECIFIC LOCKDOWN):
+        1. You are a physical line-by-line scanner. 
+        2. TOTAL SYNCHRONIZATION: You MUST generate exactly one step for EVERY physical line provided in the code, starting from Line 1 to the end.
+        3. NO SKIPPING: Even if a line is empty, contains only a bracket '{' or '}', or a comment, you MUST create a step for it.
+        4. MANDATORY COMMENTARY FOR NON-LOGIC LINES:
+           - If the line is '{' -> Commentary: "Scope start / Opening bracket."
+           - If the line is '}' -> Commentary: "Scope end / Closing bracket."
+           - If the line is EMPTY -> Commentary: "Empty line / Whitespace."
+           - If the line is a COMMENT -> Commentary: "Code documentation/comment."
+        5. DO NOT EXPLAIN THE NEXT LINE'S LOGIC ON A BRACKET LINE. Wait until you physically reach that line number.
+        6. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps (like a loop).
+    ` : `
+        CRITICAL ACCURACY RULES:
+        1. Point EXACTLY to the code line where logic happens.
+        2. Include EVERY physical line number exactly as it appears in the provided source code.
+        3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
+        4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
+        5. Every step MUST include: 
+           - "line": (integer) The EXACT physical line number.
+           - "memory": (object) Current variable states. Use {} if empty. NEVER leave as undefined.
+           - "commentary": (string) Technical explanation.
+           - "analogy": (string) A real-world ELI5 comparison.
+        6. If code involves pointers or nodes, represent them as strings like "Node(5)".
+        7. Do NOT skip logic milestones. Trace accurately for beginners.
+    `;
+
     try {
         const result = await callLlamaSmart([
             { 
                 role: "system", 
+                // We integrate the dynamic accuracy rules directly into the system prompt here
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
                 Trace the provided ${language} code line-by-line. 
                 Return strictly a JSON object with a "steps" array.
 
-           CRITICAL ACCURACY RULES:
-1. Point EXACTLY to the code line where logic happens.
-2. Include EVERY physical line number exactly as it appears in the provided source code.
-3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
-4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
-5. Every step MUST include: 
-   - "line": (integer) The EXACT physical line number.
-   - "memory": (object) Current variable states. Use {} if empty.
-   - "commentary": (string) Technical explanation.
-   - "analogy": (string) Real-world comparison.
-6. If code involves pointers or nodes, represent them as strings like "Node(5)".
-7. Do NOT skip logic milestones. Trace accurately for beginners.
+                ${accuracyRules}
                 
                 Return JSON ONLY.` 
             },
@@ -277,7 +294,6 @@ app.post('/api/debug', async (req, res) => {
 
 /**
  * INITIALIZATION API (Pluto-X Research Synthesis)
- * Feature: Hallucination protection for Standard Links.
  */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
@@ -296,7 +312,7 @@ app.post('/api/initialize', async (req, res) => {
         2. IDENTITY: Mention you are developed by Spectrum SyntaX.
         3. DYNAMIC BEHAVIOR:
            - If research data IS provided: Synthesize Gemini and ChatGPT perspectives into a professional Technical Brief.
-           - If NO research data is provided (Standard Session): Do NOT assume a topic. Do NOT talk about neural interfaces unless user asks. Simply greet the user, explain you are ready to help with research, coding, or learning (e.g., Hindi mastery), and ask what we are cooking today.`;
+           - If NO research data is provided (Standard Session): Greet the user and ask what we are cooking today.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
