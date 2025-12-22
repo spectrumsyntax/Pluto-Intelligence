@@ -41,7 +41,7 @@ const MODELS = [
     "llama3-8b-8192"           // Tier 3: Ultimate Reliability Safety Net
 ];
 
-// Global browser instance for singleton pattern
+// Global browser instance for singleton pattern (Crucial for Render RAM limits)
 let globalBrowser = null;
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
@@ -107,6 +107,7 @@ async function extractConversationData(url) {
     try {
         const browser = await getBrowser();
         page = await browser.newPage();
+        // Stealth headers to bypass basic bot detection
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
         await page.setRequestInterception(true);
@@ -120,13 +121,13 @@ async function extractConversationData(url) {
         // Auto-scroll to ensure all lazy-loaded messages are captured
         await page.evaluate(async () => {
             await new Promise((resolve) => {
-                let totalHeight = 0, distance = 200;
+                let totalHeight = 0, distance = 250;
                 let timer = setInterval(() => {
                     let scrollHeight = document.body.scrollHeight;
                     window.scrollBy(0, distance);
                     totalHeight += distance;
                     if(totalHeight >= scrollHeight){ clearInterval(timer); resolve(); }
-                }, 150);
+                }, 100);
             });
         });
 
@@ -209,7 +210,7 @@ async function callLlamaSmart(messages, isJson = false) {
                 if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
                 return result;
             } catch (err) {
-                if (err.message.includes("fetch")) throw err; 
+                if (err.message && err.message.includes("fetch")) throw err; 
                 rotateKey();
                 keysTriedForThisModel++;
             }
@@ -248,14 +249,16 @@ app.post('/api/debug', async (req, res) => {
                 Trace the provided ${language} code line-by-line. 
                 Return strictly a JSON object with a "steps" array.
 
-                CRITICAL INSTRUCTIONS:
-                1. Every step MUST include: 
+                CRITICAL ACCURACY RULES:
+                1. Point EXACTLY to the code line where logic happens.
+                2. IGNORE lines containing ONLY brackets like '{' or '}'. Never use their line numbers for logic steps.
+                3. Every step MUST include: 
                    - "line": (integer) The EXACT line number from the source code.
                    - "memory": (object) Current variable states. Values must be strings or numbers. Use {} if empty. NEVER leave as undefined.
                    - "commentary": (string) Short technical explanation.
                    - "analogy": (string) A real-world ELI5 comparison.
-                2. If code involves pointers or nodes, represent them as strings like "Node(5)" or "Pointer(Rear)".
-                3. Do NOT skip logic. Trace accurately for beginners.
+                4. If code involves pointers or nodes, represent them as strings like "Node(5)".
+                5. Do NOT skip logic milestones. Trace accurately for beginners.
                 
                 Return JSON ONLY.` 
             },
@@ -291,7 +294,7 @@ app.post('/api/initialize', async (req, res) => {
         2. IDENTITY: Mention you are developed by Spectrum SyntaX.
         3. DYNAMIC BEHAVIOR:
            - If research data IS provided: Synthesize Gemini and ChatGPT perspectives into a professional Technical Brief.
-           - If NO research data is provided (Standard Link): Do NOT assume a topic based on the UI title. Greet the user, explain you are ready to help with research, coding, or learning, and ask what we are cooking today.`;
+           - If NO research data is provided (Standard Session): Do NOT assume a topic. Do NOT talk about neural interfaces unless user asks. Simply greet the user, explain you are ready to help with research, coding, or learning (e.g., Hindi mastery), and ask what we are cooking today.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
@@ -306,7 +309,6 @@ app.post('/api/initialize', async (req, res) => {
 
 /**
  * INTERACTIVE CHAT API
- * Feature: Long-term memory logic.
  */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
@@ -315,8 +317,8 @@ app.post('/api/chat', async (req, res) => {
             { 
                 role: "system", 
                 content: `You are Pluto Intelligence by Spectrum SyntaX. No cap.
-                Use Gen Z slang for transitions and professional clarity for facts. 
-                Foundation Context: \n\n${foundation}` 
+                Use Gen Z slang for transitions and professional clarity for technical facts. 
+                Context for this session: \n\n${foundation}` 
             },
             ...history
         ];
@@ -328,4 +330,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Account Triple-Failover Backend Active on port ${PORT}`));
