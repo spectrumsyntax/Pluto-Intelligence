@@ -41,7 +41,7 @@ const MODELS = [
     "llama3-8b-8192"           // Tier 3: Ultimate Reliability Safety Net
 ];
 
-// Global browser instance for singleton pattern (Crucial for Render RAM limits)
+// Global browser instance for singleton pattern
 let globalBrowser = null;
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
@@ -155,11 +155,25 @@ async function extractConversationData(url) {
 }
 
 /**
+ * Robust JSON Extractor
+ */
+function extractJSON(text) {
+    try {
+        const first = text.indexOf('{');
+        const last = text.lastIndexOf('}');
+        if (first === -1 || last === -1) return null;
+        return JSON.parse(text.substring(first, last + 1));
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
  * callLlamaSmart: The Ultimate Failover Core
  * logic:
  * 1. Takes the first model (70b).
  * 2. Tries Key 1. If Rate Limit -> Tries Key 2.
- * 3. Only if ALL keys are rate-limited on the 70b, it moves to the next model and resets key rotation.
+ * 3. Only if ALL keys are rate-limited on the current model, it moves to the next model tier.
  */
 async function callLlamaSmart(messages, isJson = false) {
     const rotateKey = () => {
@@ -179,7 +193,7 @@ async function callLlamaSmart(messages, isJson = false) {
                     body: JSON.stringify({ 
                         model: modelName, 
                         messages, 
-                        temperature: isJson ? 0.2 : 0.7, 
+                        temperature: isJson ? 0.1 : 0.7, 
                         max_tokens: 8192 
                     })
                 });
@@ -222,6 +236,7 @@ async function callLlamaSmart(messages, isJson = false) {
 
 /**
  * GHOST MODE DEBUGGER API
+ * Feature: Elite Simplicity 3.0 + ML support.
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
@@ -230,23 +245,25 @@ app.post('/api/debug', async (req, res) => {
             { 
                 role: "system", 
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
-                Trace the following ${language} code. Return a JSON object with a "steps" array.
+                Trace the provided ${language} code line-by-line. 
+                Return strictly a JSON object with a "steps" array.
 
-                CRITICAL RULES:
-                1. TARGET: Beginners with ZERO coding knowledge. 
-                2. ANALOGY: Provide a real-world ELI5 'analogy' for every single step.
-                3. COMPLEXITY: Weights as "Influence," Gradient Descent as "Lowest Valley," Nodes as "Train Cars."
-                4. POINTER SAFETY: Represent objects as simplified strings (e.g., "Node(data: 5)" to avoid JSON breakage.
-                5. BIG CODE: Max 30 steps. Focus on high-impact logic shifts.
-                6. BUG FIX: The 'memory' field MUST ALWAYS be an object (e.g., {}). Never leave it undefined.
-
-                Ensure strictly valid JSON.` 
+                CRITICAL INSTRUCTIONS:
+                1. Every step MUST include: 
+                   - "line": (integer) The EXACT line number from the source code.
+                   - "memory": (object) Current variable states. Values must be strings or numbers. Use {} if empty. NEVER leave as undefined.
+                   - "commentary": (string) Short technical explanation.
+                   - "analogy": (string) A real-world ELI5 comparison.
+                2. If code involves pointers or nodes, represent them as strings like "Node(5)" or "Pointer(Rear)".
+                3. Do NOT skip logic. Trace accurately for beginners.
+                
+                Return JSON ONLY.` 
             },
-            { role: "user", content: `LANGUAGE: ${language}\nCODE:\n${code}` }
+            { role: "user", content: `CODE:\n${code}` }
         ], true);
 
-        const content = result.choices?.[0]?.message?.content;
-        const trace = JSON.parse(content.substring(content.indexOf('{'), content.lastIndexOf('}') + 1));
+        const trace = extractJSON(result.choices?.[0]?.message?.content);
+        if (!trace || !trace.steps) throw new Error("AI returned malformed trace data.");
         res.json({ success: true, trace });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -255,6 +272,7 @@ app.post('/api/debug', async (req, res) => {
 
 /**
  * INITIALIZATION API (Pluto-X Research Synthesis)
+ * Feature: Hallucination protection for Standard Links.
  */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
@@ -269,14 +287,15 @@ app.post('/api/initialize', async (req, res) => {
         const systemPrompt = `You are Pluto Intelligence, an elite synthesizer developed by Spectrum SyntaX. 
         
         PERSONA RULES:
-        1. Greet with massive Gen Z vibes (fr, no cap, locked in, cooking).
-        2. IDENTITY: Created by Spectrum SyntaX.
-        3. OPEN ENDED: If no research links are provided, do NOT assume a topic based on the title. Just greet the user and ask what we are working on today (e.g., learning Hindi, solving code, general questions).
-        4. TECHNICAL BRIEF: If research data IS provided, be 100% professional and academic in the synthesis core.`;
+        1. Greet with massive Gen Z vibes (fr, no cap, locked in).
+        2. IDENTITY: Mention you are developed by Spectrum SyntaX.
+        3. DYNAMIC BEHAVIOR:
+           - If research data IS provided: Synthesize Gemini and ChatGPT perspectives into a professional Technical Brief.
+           - If NO research data is provided (Standard Link): Do NOT assume a topic based on the UI title. Greet the user, explain you are ready to help with research, coding, or learning, and ask what we are cooking today.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
-            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}` : `Initialize standard Neural Link session. Title: ${title}. Ask user for instructions.` }
+            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}` : `Initialize Standard Session. Greet user and wait for instructions.` }
         ]);
         
         res.json({ success: true, foundation: result.choices?.[0]?.message?.content });
@@ -287,6 +306,7 @@ app.post('/api/initialize', async (req, res) => {
 
 /**
  * INTERACTIVE CHAT API
+ * Feature: Long-term memory logic.
  */
 app.post('/api/chat', async (req, res) => {
     const { foundation, history } = req.body;
@@ -295,7 +315,7 @@ app.post('/api/chat', async (req, res) => {
             { 
                 role: "system", 
                 content: `You are Pluto Intelligence by Spectrum SyntaX. No cap.
-                Use Gen Z slang for small talk and elite technical clarity for facts. 
+                Use Gen Z slang for transitions and professional clarity for facts. 
                 Foundation Context: \n\n${foundation}` 
             },
             ...history
