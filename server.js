@@ -240,24 +240,25 @@ app.post('/api/debug', async (req, res) => {
 
     const accuracyRules = language === 'c' ? `
         CRITICAL ACCURACY RULES (C-SPECIFIC LOCKDOWN):
-        1. You are a physical line-by-line scanner. 
+        1. PHYSICAL SCANNER MODE: Analyze the code exactly as formatted.
         2. TOTAL SYNCHRONIZATION: You MUST generate exactly one step for EVERY physical line provided in the code, starting from Line 1 to the end.
         3. NO SKIPPING: Even if a line is empty, contains only a bracket '{' or '}', or a comment, you MUST create a step for it.
         4. MANDATORY COMMENTARY FOR NON-LOGIC LINES:
            - If the line is '{' -> Commentary: "Scope start / Opening bracket."
            - If the line is '}' -> Commentary: "Scope end / Closing bracket."
-           - If the line is EMPTY -> Commentary: "Empty line / Whitespace."
-           - If the line is a COMMENT -> Commentary: "Code documentation/comment."
-        5. DO NOT EXPLAIN THE NEXT LINE'S LOGIC ON A BRACKET LINE. Wait until you physically reach that line number.
-        6. MEMORY PERSISTENCE: The "memory" object MUST contain the full, current state of ALL variables in scope. Even on bracket or empty lines, you MUST list all variables and their current values. NEVER send an empty {} if variables have been defined earlier.
+           - If the line is EMPTY -> Commentary: "Whitespace / Empty physical line."
+           - If the line is a COMMENT -> Commentary: "Documentation/Code comment."
+        5. DO NOT EXPLAIN AHEAD: Do not explain the next line's logic while on a bracket line.
+        6. MEMORY PERSISTENCE (STRICT): The "memory" object MUST contain the full, current state of ALL variables in scope. Even on bracket or empty lines, you MUST list all defined variables and their current values. NEVER send an empty {} if variables have been defined in previous steps.
         7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps (like a loop).
+        8. MEMORY INTEGRITY: Omission of defined variables is strictly forbidden.
     ` : `
         CRITICAL ACCURACY RULES:
         1. Point EXACTLY to the code line where logic happens.
         2. Include EVERY physical line number exactly as it appears in the provided source code.
         3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
         4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
-        5. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all variables. Do not send {} on bracket steps.
+        5. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all defined variables. Carry forward values in every step. Do not send {} on bracket steps.
         6. Every step MUST include: 
            - "line": (integer) The EXACT physical line number.
            - "memory": (object) Current variable states. Use {} if empty. NEVER leave as undefined.
