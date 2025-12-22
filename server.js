@@ -33,13 +33,12 @@ const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/
 
 /**
  * INTELLIGENCE TIERS (Triple-Model Failover)
- * Tier 1: Primary goal. We use all keys here first.
- * Tier 2/3: Emergency bunkers if Groq 70b servers are down or all accounts maxed.
+ * Standardized Groq IDs to ensure failover works without 404 errors.
  */
 const MODELS = [
     "llama-3.3-70b-versatile", // Tier 1: Max Intelligence (Priority)
-    "llama3-70b-8192",         // Tier 2: Mid-tier Logic (Backup Server Cluster)
-    "llama3-8b-8192"           // Tier 3: Ultimate Reliability (Emergency Net)
+    "llama3-70b-8192",         // Tier 2: Mid-tier Logic
+    "llama3-8b-8192"           // Tier 3: Ultimate Reliability Safety Net
 ];
 
 // Global browser instance for singleton pattern (Crucial for Render RAM limits)
@@ -100,7 +99,7 @@ function sanitizeScrapedContent(text) {
 }
 
 /**
- * Pluto-X Scraper - Optimized for modern AI share links
+ * Pluto-X Scraper - Optimized for modern AI share links with auto-scroll
  */
 async function extractConversationData(url) {
     let page;
@@ -118,6 +117,7 @@ async function extractConversationData(url) {
 
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
+        // Auto-scroll to ensure all lazy-loaded messages are captured
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0, distance = 200;
@@ -155,11 +155,11 @@ async function extractConversationData(url) {
 }
 
 /**
- * callLlamaSmart: The Failover Core
+ * callLlamaSmart: The Ultimate Failover Core
  * logic:
  * 1. Takes the first model (70b).
  * 2. Tries Key 1. If Rate Limit -> Tries Key 2.
- * 3. Only if ALL keys are rate-limited on the 70b, it moves to the next model.
+ * 3. Only if ALL keys are rate-limited on the 70b, it moves to the next model and resets key rotation.
  */
 async function callLlamaSmart(messages, isJson = false) {
     const rotateKey = () => {
@@ -185,9 +185,8 @@ async function callLlamaSmart(messages, isJson = false) {
                 });
                 const result = await response.json();
                 
-                // If it's a rate limit error, switch keys and try again
                 if (response.status === 429 || (result.error && result.error.type === 'rate_limit_reached')) {
-                    console.warn(`⚠️ Account Key ${currentKeyIndex} hit limit on ${modelName}. Rotating...`);
+                    console.warn(`⚠️ Account Key Index ${currentKeyIndex} hit limit on ${modelName}. Rotating...`);
                     rotateKey();
                     keysTriedForThisModel++;
                     continue; 
@@ -196,7 +195,6 @@ async function callLlamaSmart(messages, isJson = false) {
                 if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
                 return result;
             } catch (err) {
-                // If it's a network error, we still try the next key
                 if (err.message.includes("fetch")) throw err; 
                 rotateKey();
                 keysTriedForThisModel++;
@@ -237,9 +235,10 @@ app.post('/api/debug', async (req, res) => {
                 CRITICAL RULES:
                 1. TARGET: Beginners with ZERO coding knowledge. 
                 2. ANALOGY: Provide a real-world ELI5 'analogy' for every single step.
-                3. COMPLEXITY: Simplify ML weights as "Influence," Gradient Descent as "Finding the lowest valley."
-                4. POINTER SAFETY: Represent objects as simplified strings like "Node(data: 5)" to avoid JSON breakage.
+                3. COMPLEXITY: Weights as "Influence," Gradient Descent as "Lowest Valley," Nodes as "Train Cars."
+                4. POINTER SAFETY: Represent objects as simplified strings (e.g., "Node(data: 5)" to avoid JSON breakage.
                 5. BIG CODE: Max 30 steps. Focus on high-impact logic shifts.
+                6. BUG FIX: The 'memory' field MUST ALWAYS be an object (e.g., {}). Never leave it undefined.
 
                 Ensure strictly valid JSON.` 
             },
@@ -268,11 +267,16 @@ app.post('/api/initialize', async (req, res) => {
         }
 
         const systemPrompt = `You are Pluto Intelligence, an elite synthesizer developed by Spectrum SyntaX. 
-        PERSONA: Greet with Gen Z vibes. Core briefing must be professional. Synthesize data if provided.`;
+        
+        PERSONA RULES:
+        1. Greet with massive Gen Z vibes (fr, no cap, locked in, cooking).
+        2. IDENTITY: Created by Spectrum SyntaX.
+        3. OPEN ENDED: If no research links are provided, do NOT assume a topic based on the title. Just greet the user and ask what we are working on today (e.g., learning Hindi, solving code, general questions).
+        4. TECHNICAL BRIEF: If research data IS provided, be 100% professional and academic in the synthesis core.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
-            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}` : `SESSION TITLE: ${title}` }
+            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}` : `Initialize standard Neural Link session. Title: ${title}. Ask user for instructions.` }
         ]);
         
         res.json({ success: true, foundation: result.choices?.[0]?.message?.content });
@@ -292,7 +296,7 @@ app.post('/api/chat', async (req, res) => {
                 role: "system", 
                 content: `You are Pluto Intelligence by Spectrum SyntaX. No cap.
                 Use Gen Z slang for small talk and elite technical clarity for facts. 
-                Foundation: \n\n${foundation}` 
+                Foundation Context: \n\n${foundation}` 
             },
             ...history
         ];
@@ -304,4 +308,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Account Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
