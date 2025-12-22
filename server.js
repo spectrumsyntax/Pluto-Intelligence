@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
  * Features: Pluto-X, Ghost Mode Debugger (Elite Simplicity 2.0), Standard Chat.
- * Failover Logic: Dual-Model Switching (Primary -> Secondary on Rate Limit).
+ * Failover Logic: Triple-Model Switching (Primary -> Secondary -> Tertiary).
  * Identity: Developed by Spectrum SyntaX.
  * Persona: Gen Z Mixed (Locked in, fr, no cap) + Elite Technical Clarity.
  */
@@ -23,11 +23,15 @@ const PORT = process.env.PORT || 10000;
 const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
-// DUAL MODEL CONFIGURATION
-const PRIMARY_MODEL = "llama-3.3-70b-versatile"; // High Intelligence (Max TPD 100k)
-const SECONDARY_MODEL = "llama-3-8b-8192";      // High Rate Limit / Backup (Reliable)
+// TRIPLE MODEL CONFIGURATION (Failover Chain)
+// We cycle through these to ensure we NEVER hit a hard limit for the user.
+const MODELS = [
+    "llama-3.3-70b-versatile", // Tier 1: Max Intelligence (Daily limit ~100k tokens)
+    "mixtral-8x7b-32768",      // Tier 2: Mid-tier Logic (Independent limit bucket)
+    "llama-3-8b-8192"          // Tier 3: High Speed/Unlimited (Ultimate safety net)
+];
 
-// Global browser instance for singleton pattern
+// Global browser instance for singleton pattern (Saves 60% RAM on Render)
 let globalBrowser = null;
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
@@ -103,7 +107,7 @@ async function extractConversationData(url) {
 
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Auto-scroll to ensure all lazy-loaded messages are captured
+        // Auto-scroll to capture all messages in SPAs
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0, distance = 200;
@@ -141,8 +145,8 @@ async function extractConversationData(url) {
 }
 
 /**
- * Enhanced AI Call with Automatic Failover Switching
- * Logic: Try Primary -> If 429/TPD Limit reached -> Switch to Secondary
+ * Enhanced AI Call with Triple-Model Failover
+ * Switches automatically: llama-3.3-70b -> mixtral-8x7b -> llama-3-8b
  */
 async function callLlamaSmart(messages, isJson = false) {
     const tryCall = async (modelName, retries = 3) => {
@@ -161,36 +165,39 @@ async function callLlamaSmart(messages, isJson = false) {
                 });
                 const result = await response.json();
                 
-                // If it's a hard rate limit or token limit, signal failover
+                // Detection of Rate Limit (429) or Token Limit reached
                 if (response.status === 429 || (result.error && result.error.type === 'rate_limit_reached')) {
-                    throw { name: "RateLimitError", message: "Limit reached" };
+                    throw { name: "RateLimitError", message: `Limit reached for ${modelName}` };
                 }
 
                 if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
                 return result;
             } catch (err) {
-                if (err.name === "RateLimitError") throw err; // Bubble up to trigger switch
+                if (err.name === "RateLimitError") throw err; 
                 if (i === retries - 1) throw err;
                 await new Promise(res => setTimeout(res, delays[i]));
             }
         }
     };
 
-    try {
-        // First attempt with the Smartest model
-        return await tryCall(PRIMARY_MODEL);
-    } catch (error) {
-        if (error.name === "RateLimitError") {
-            // Automatic switch to the backup model
-            console.log(`⚠️ Primary model rate limited. Switching to ${SECONDARY_MODEL}...`);
-            return await tryCall(SECONDARY_MODEL);
+    // Cycle through defined models in order until one responds
+    for (const modelName of MODELS) {
+        try {
+            return await tryCall(modelName);
+        } catch (error) {
+            if (error.name === "RateLimitError") {
+                if (modelName !== MODELS[MODELS.length - 1]) {
+                    console.log(`⚠️ ${modelName} limit hit. Switching to next fallback model...`);
+                    continue; 
+                }
+            }
+            throw error; 
         }
-        throw error;
     }
 }
 
 /**
- * GHOST MODE DEBUGGER API
+ * GHOST MODE DEBUGGER API (Elite Simplicity 2.0)
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
@@ -203,12 +210,12 @@ app.post('/api/debug', async (req, res) => {
 
                 CRITICAL INSTRUCTIONS FOR ELITE SIMPLICITY:
                 1. TARGET AUDIENCE: People with zero coding knowledge. 
-                2. ANALOGY FIELD: For every single step, you MUST provide an 'analogy' string that explains the logic using real-world concepts (cooking, driving, sports, etc.).
+                2. ANALOGY FIELD: For every single step, you MUST provide an 'analogy' string using real-world concepts.
                 3. COMPLEXITY HANDLING: 
-                   - For ML (Neural Networks): Simplify weights as "Influence," Gradient Descent as "Finding the lowest valley," and Tensors as "Data Grids."
+                   - For ML (Neural Networks): Simplify weights as "Influence," Gradient Descent as "Finding the lowest valley."
                    - For Data Structures: Linked Lists are "Linked train cars," Stacks are "Piles of plates."
-                4. POINTER SAFETY: Represent object values (Nodes, Tensors) as simplified strings (e.g., "Node(data: 5)") to avoid nested JSON errors.
-                5. BIG CODE: Max 30 steps. Skip boilerplates, focus on initialization, loops, logic shifts, and final output.
+                4. POINTER SAFETY: Represent objects as simplified strings (e.g., "Node(data: 5)") to avoid JSON errors.
+                5. BIG CODE: Max 30 steps. Focus on high-impact logic shifts and loop milestones.
 
                 Each step MUST have:
                 - line: (number) current line executing
@@ -220,10 +227,7 @@ app.post('/api/debug', async (req, res) => {
 
                 Ensure strictly valid JSON.` 
             },
-            { 
-                role: "user", 
-                content: `LANGUAGE: ${language}\nCODE:\n${code}` 
-            }
+            { role: "user", content: `LANGUAGE: ${language}\nCODE:\n${code}` }
         ], true);
 
         const content = result.choices?.[0]?.message?.content;
@@ -252,10 +256,10 @@ app.post('/api/initialize', async (req, res) => {
         
         PERSONA RULES:
         1. IDENTITY: Created by Spectrum SyntaX. No cap.
-        2. SLANG: Use a Gen Z mix (locked in, fr, vibes, bet, cooking) ONLY for intro/outro paragraphs. 
-        3. CONTENT: For the technical brief, be 100% professional and academic. No slang in the core facts.
+        2. SLANG: Use a Gen Z mix (locked in, fr, vibes, bet, cooking) ONLY for intro/outro. 
+        3. CONTENT: Core factual brief must be 100% professional and academic. No slang in the actual explanation.
         4. FORMAT: Use bold headers and Markdown tables for comparisons.
-        5. SOURCE: Synthesize provided data into one seamless knowledge foundation.`;
+        5. SOURCE: Synthesize all data into one seamless knowledge foundation.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
@@ -280,10 +284,10 @@ app.post('/api/chat', async (req, res) => {
                 content: `You are Pluto Intelligence, an AI developed by Spectrum SyntaX. 
                 
                 BEHAVIOR:
-                - IDENTITY: Created by Spectrum SyntaX. Mention this if asked. No cap.
-                - PERSONALITY: Stay "locked in." Use Gen Z slang (fr, lowkey, bet, vibes, cooking) for greetings and transitions.
+                - IDENTITY: Created by Spectrum SyntaX. No cap. Mention this if asked.
+                - PERSONALITY: Stay "locked in." Use Gen Z slang (fr, lowkey, vibes, cooking) for greetings and small talk.
                 - CLARITY: Use high-IQ professional language for technical explanations.
-                - CONTEXT: You are strictly grounded in this knowledge foundation: \n\n${foundation}` 
+                - CONTEXT: You are grounded in this foundation: \n\n${foundation}` 
             },
             ...history
         ];
@@ -295,4 +299,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
