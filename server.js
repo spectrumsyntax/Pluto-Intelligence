@@ -2,7 +2,7 @@
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
  * Features: Pluto-X, Ghost Mode Debugger (Elite Simplicity 3.0), Standard Chat.
- * Failover Logic: Triple-Model Switching (Primary -> Secondary -> Tertiary).
+ * Failover Logic: Multi-Key Rotation + Triple-Model Switching.
  * Identity: Developed by Spectrum SyntaX.
  * Persona: Gen Z Mixed (Locked in, fr, no cap) + Elite Technical Clarity.
  */
@@ -20,15 +20,18 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
-const LLAMA_API_KEY = process.env.LLAMA_API_KEY;
+
+// API KEY POOL: Supports a single key or a comma-separated list (e.g., "key1,key2,key3")
+const API_KEYS = (process.env.LLAMA_API_KEY || "").split(',').map(k => k.trim()).filter(k => k);
+let currentKeyIndex = 0;
+
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
 // TRIPLE MODEL CONFIGURATION (Failover Chain)
-// Correct IDs for Groq API: High Intelligence -> Stable Backups
 const MODELS = [
-    "llama-3.3-70b-versatile", // Tier 1: Max Intelligence (Daily limit ~100k tokens)
-    "llama3-70b-8192",         // Tier 2: Mid-tier Logic (Independent limit bucket)
-    "llama3-8b-8192"           // Tier 3: High Speed/Throughput (Ultimate safety net)
+    "llama-3.3-70b-versatile", // Tier 1: Max Intelligence
+    "llama3-70b-8192",         // Tier 2: Mid-tier Logic
+    "llama3-8b-8192"           // Tier 3: High Throughput Safety Net
 ];
 
 // Global browser instance for singleton pattern (Crucial for Render RAM limits)
@@ -107,7 +110,6 @@ async function extractConversationData(url) {
 
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Auto-scroll to capture lazy-loaded knowledge
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0, distance = 200;
@@ -145,17 +147,26 @@ async function extractConversationData(url) {
 }
 
 /**
- * Enhanced AI Call with Triple-Model Failover Switching
- * Logic: Cycles through Tier 1 -> Tier 2 -> Tier 3 on Rate Limits
+ * Enhanced AI Call with Key Rotation & Triple-Model Failover
+ * 1. Tries Current Key with Current Model.
+ * 2. If 429: Rotates Key and retries Current Model.
+ * 3. If All Keys exhausted: Swaps to Next Model and resets key index.
  */
 async function callLlamaSmart(messages, isJson = false) {
-    const tryCall = async (modelName, retries = 2) => {
-        const delays = [1000, 2000];
-        for (let i = 0; i < retries; i++) {
+    const rotateKey = () => {
+        currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+        console.log(`🔑 Rotating to API Key Index: ${currentKeyIndex}`);
+    };
+
+    const tryModelWithRotation = async (modelName) => {
+        let keysTriedForThisModel = 0;
+
+        while (keysTriedForThisModel < API_KEYS.length) {
+            const currentKey = API_KEYS[currentKeyIndex];
             try {
                 const response = await fetch(LLAMA_API_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LLAMA_API_KEY}` },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentKey}` },
                     body: JSON.stringify({ 
                         model: modelName, 
                         messages, 
@@ -165,41 +176,43 @@ async function callLlamaSmart(messages, isJson = false) {
                 });
                 const result = await response.json();
                 
-                // Signal failover on 429 or daily token limit exhaustion
                 if (response.status === 429 || (result.error && result.error.type === 'rate_limit_reached')) {
-                    throw { name: "RateLimitError", message: `Limit reached for ${modelName}` };
+                    console.warn(`⚠️ Key ${currentKeyIndex} rate limited on ${modelName}.`);
+                    rotateKey();
+                    keysTriedForThisModel++;
+                    continue; // Try next key
                 }
 
                 if (!response.ok) throw new Error(result.error?.message || `API Error: ${response.status}`);
                 return result;
             } catch (err) {
-                if (err.name === "RateLimitError") throw err; 
-                if (i === retries - 1) throw err;
-                await new Promise(res => setTimeout(res, delays[i]));
+                if (err.message.includes("fetch")) throw err; // Network error
+                rotateKey();
+                keysTriedForThisModel++;
             }
         }
+        throw { name: "AllKeysExhausted", message: `All keys rate limited for ${modelName}` };
     };
 
     let lastError = null;
     for (const modelName of MODELS) {
         try {
             console.log(`🚀 Attempting request with ${modelName}...`);
-            return await tryCall(modelName);
+            return await tryModelWithRotation(modelName);
         } catch (error) {
             lastError = error;
-            if (error.name === "RateLimitError") {
-                console.warn(`⚠️ ${modelName} rate limited. Attempting next fallback...`);
+            if (error.name === "AllKeysExhausted") {
+                console.warn(`🚨 Model ${modelName} fully exhausted across all keys. Moving to next model tier...`);
                 continue; 
             }
-            console.error(`❌ Error with ${modelName}: ${error.message}`);
+            console.error(`❌ Non-rate-limit error with ${modelName}: ${error.message}`);
         }
     }
-    throw new Error(`All models exhausted. Last error: ${lastError?.message}`);
+    throw new Error(`CRITICAL: All models and all API keys exhausted. Last error: ${lastError?.message}`);
 }
 
 /**
- * GHOST MODE DEBUGGER API (Elite Simplicity 3.0)
- * Handles Algos, ML, and Data Structures for zero-knowledge users.
+ * GHOST MODE DEBUGGER API
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
@@ -213,20 +226,10 @@ app.post('/api/debug', async (req, res) => {
                 CRITICAL RULES:
                 1. TARGET: Beginners with ZERO coding knowledge. 
                 2. ANALOGY: Provide a real-world ELI5 'analogy' for every single step.
-                3. COMPLEXITY: 
-                   - ML: Weights -> "Influence," Learning Rate -> "Step Size," Tensors -> "Grids."
-                   - Lists: Nodes -> "Train Cars."
-                4. POINTER SAFETY: Objects/Nodes MUST be represented as simple strings like "Node(5)" to avoid JSON breakage.
-                5. BIG CODE: Max 30 steps. Focus on high-impact logic shifts and final state.
+                3. COMPLEXITY: Simplify ML weights as "Influence," Gradient Descent as "Finding the lowest valley."
+                4. POINTER SAFETY: Represent objects as simplified strings like "Node(data: 5)" to avoid JSON breakage.
+                5. BIG CODE: Max 30 steps. Focus on high-impact logic shifts.
 
-                JSON Step Schema:
-                - line: (number)
-                - memory: (object) variable: value pairs (values MUST be strings or numbers)
-                - stack: (array) function names
-                - event: "variable_move" | "loop_cycle" | "func_call" | "normal"
-                - commentary: (string) short tech-clear explanation
-                - analogy: (string) real-world comparison.
-                
                 Ensure strictly valid JSON.` 
             },
             { role: "user", content: `LANGUAGE: ${language}\nCODE:\n${code}` }
@@ -251,19 +254,14 @@ app.post('/api/initialize', async (req, res) => {
             const transcripts = [];
             for (const l of links) if (l.url) transcripts.push(await extractConversationData(l.url));
             validData = transcripts.filter(t => !t.startsWith("DATA_ERROR")).join('\n\n');
-            if (validData.length < 200) throw new Error("Extraction Failed. Ensure links are public.");
         }
 
         const systemPrompt = `You are Pluto Intelligence, an elite synthesizer developed by Spectrum SyntaX. 
-        
-        PERSONA:
-        - Greet with Gen Z vibes (locked in, fr, vibes, cooking).
-        - Core briefing must be 100% professional and technical.
-        - GROUNDED: If research data is provided, synthesize Gemini and ChatGPT perspectives into one foundation.`;
+        PERSONA: Greet with Gen Z vibes. Core briefing must be professional. Synthesize data if provided.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
-            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}\nTASK: Brief me. Intro with vibes, then facts.` : `SESSION TITLE: ${title}` }
+            { role: "user", content: validData ? `DATA:\n${validData}\nTOPIC: ${title}` : `SESSION TITLE: ${title}` }
         ]);
         
         res.json({ success: true, foundation: result.choices?.[0]?.message?.content });
@@ -281,9 +279,9 @@ app.post('/api/chat', async (req, res) => {
         const messages = [
             { 
                 role: "system", 
-                content: `You are Pluto Intelligence, an AI by Spectrum SyntaX. No cap.
-                Stay locked in. Use Gen Z slang for small talk and elite technical clarity for facts. 
-                Use this knowledge base: \n\n${foundation}` 
+                content: `You are Pluto Intelligence by Spectrum SyntaX. No cap.
+                Use Gen Z slang for small talk and elite technical clarity for facts. 
+                Foundation: \n\n${foundation}` 
             },
             ...history
         ];
@@ -295,4 +293,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Key Failover Backend Active on port ${PORT}`));
