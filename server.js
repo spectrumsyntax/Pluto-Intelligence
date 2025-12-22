@@ -1,7 +1,7 @@
 /**
  * Pluto AI Platform - Backend (Node.js)
  * Purpose: General-purpose AI Research & Synthesis Engine.
- * Features: Pluto-X, Ghost Mode Debugger, Standard Chat.
+ * Features: Pluto-X, Ghost Mode Debugger (Elite Simplicity 2.0), Standard Chat.
  * Identity: Developed by Spectrum SyntaX.
  * Persona: Gen Z Mixed (Locked in, fr, no cap) + Elite Technical Clarity.
  */
@@ -166,7 +166,8 @@ async function callLlamaWithRetry(messages, isJson = false, retries = 5) {
 }
 
 /**
- * GHOST MODE DEBUGGER API
+ * GHOST MODE DEBUGGER API (Elite Simplicity 2.0)
+ * Updated to support ML Algorithms and provide analogies for non-coders.
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
@@ -175,17 +176,26 @@ app.post('/api/debug', async (req, res) => {
             { 
                 role: "system", 
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
-                Trace the following ${language} code line-by-line. 
-                Return a JSON object with a "steps" array. 
+                Trace the following ${language} code. 
+                Return a JSON object with a "steps" array.
+
+                CRITICAL INSTRUCTIONS FOR ELITE SIMPLICITY:
+                1. TARGET AUDIENCE: People with zero coding knowledge. 
+                2. ANALOGY FIELD: For every single step, you MUST provide an 'analogy' string that explains the logic using real-world concepts (cooking, driving, sports, etc.).
+                3. COMPLEXITY HANDLING: 
+                   - For ML (Neural Networks, Regressions): Simplify weights as "Influence," Gradient Descent as "Finding the lowest valley," and Tensors as "Data Grids."
+                   - For Data Structures: Linked Lists are "Linked train cars," Stacks are "Piles of plates."
+                4. POINTER SAFETY: Represent object values (Nodes, Tensors) as simplified strings (e.g., "Node(data: 5)" or "Grid(3x3)") to avoid nested JSON errors.
+
                 Each step MUST have:
                 - line: (number) current line executing
-                - code: (string) the code snippet of that line
-                - memory: (object) current variable states
-                - stack: (array) function names currently in the stack
-                - event: (string) "variable_move" | "loop_cycle" | "func_call" | "error_flash" | "normal"
-                - commentary: (string) short explanation of what happened.
-                - error: (string|null) if an error occurs at this step.
-                Ensure the output is strictly valid JSON.` 
+                - memory: (object) current variable states (Values MUST be strings or numbers).
+                - stack: (array) function names.
+                - event: "variable_move" | "loop_cycle" | "func_call" | "normal"
+                - commentary: (string) short, technical but simple explanation.
+                - analogy: (string) the ELI5 (Explain Like I'm 5) real-world comparison.
+
+                Ensure strictly valid JSON.` 
             },
             { 
                 role: "user", 
