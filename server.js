@@ -251,7 +251,7 @@ app.post('/api/debug', async (req, res) => {
 
                 CRITICAL ACCURACY RULES:
                 1. Point EXACTLY to the code line where logic happens.
-                2. IGNORE lines containing ONLY brackets like '{' or '}'. Never use their line numbers for logic steps.
+                2. Include EVERY physical line number exactly as it appears in the provided source code, including lines that contain only brackets, comments, or whitespace. Never skip a physical line number.
                 3. Every step MUST include: 
                    - "line": (integer) The EXACT line number from the source code.
                    - "memory": (object) Current variable states. Values must be strings or numbers. Use {} if empty. NEVER leave as undefined.
