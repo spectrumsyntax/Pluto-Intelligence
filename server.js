@@ -249,16 +249,18 @@ app.post('/api/debug', async (req, res) => {
                 Trace the provided ${language} code line-by-line. 
                 Return strictly a JSON object with a "steps" array.
 
-                CRITICAL ACCURACY RULES:
-                1. Point EXACTLY to the code line where logic happens.
-                2. Include EVERY physical line number exactly as it appears in the provided source code, including lines that contain only brackets, comments, or whitespace. Never skip a physical line number.
-                3. Every step MUST include: 
-                   - "line": (integer) The EXACT line number from the source code.
-                   - "memory": (object) Current variable states. Values must be strings or numbers. Use {} if empty. NEVER leave as undefined.
-                   - "commentary": (string) Short technical explanation.
-                   - "analogy": (string) A real-world ELI5 comparison.
-                4. If code involves pointers or nodes, represent them as strings like "Node(5)".
-                5. Do NOT skip logic milestones. Trace accurately for beginners.
+           CRITICAL ACCURACY RULES:
+1. Point EXACTLY to the code line where logic happens.
+2. Include EVERY physical line number exactly as it appears in the provided source code.
+3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
+4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
+5. Every step MUST include: 
+   - "line": (integer) The EXACT physical line number.
+   - "memory": (object) Current variable states. Use {} if empty.
+   - "commentary": (string) Technical explanation.
+   - "analogy": (string) Real-world comparison.
+6. If code involves pointers or nodes, represent them as strings like "Node(5)".
+7. Do NOT skip logic milestones. Trace accurately for beginners.
                 
                 Return JSON ONLY.` 
             },
