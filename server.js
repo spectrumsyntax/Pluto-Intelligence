@@ -29,6 +29,7 @@ const PORT = process.env.PORT || 10000;
 const API_KEYS = (process.env.LLAMA_API_KEY || "").split(',').map(k => k.trim()).filter(k => k);
 let currentKeyIndex = 0;
 
+// Fixed: Removed markdown link formatting from the fallback URL
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
 /**
@@ -280,7 +281,7 @@ app.post('/api/debug', async (req, res) => {
 
                 ${accuracyRules}
                 
-                Return JSON ONLY. No markdown wrapping.` 
+                Return JSON ONLY. No markdown wrapping outside the object.` 
             },
             { role: "user", content: `CODE:\n${code}` }
         ], true);
