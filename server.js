@@ -270,6 +270,18 @@ app.post('/api/debug', async (req, res) => {
         7. Do NOT skip logic milestones. Trace accurately for beginners.
     `;
 
+    const explanationUpgrade = `
+        MASTER TEACHER PROTOCOL:
+        1. DEEP COMMENTARY: Do not just state facts. Explain the 'Why'. (e.g., Instead of "i is 5", say "The loop counter 'i' reaches 5, triggering the exit condition because 5 is not less than 5.")
+        2. VIVID ANALOGIES: Use creative mental models. 
+           - Linked Lists = Train cars being hooked/unhooked.
+           - Memory Allocation = Reserving a table in a busy restaurant.
+           - Pointers = Treasure maps that tell you where the gold is hidden.
+           - Arrays = A row of lockers.
+        3. POINTER PRECISION: If the code is C, explain the memory address logic clearly.
+        4. MATH BREAKDOWN: If a calculation happens, show the math in the commentary (e.g., "10 + 5 becomes 15").
+    `;
+
     try {
         const result = await callLlamaSmart([
             { 
@@ -280,6 +292,7 @@ app.post('/api/debug', async (req, res) => {
                 SCHEMA: {"steps": [{"line": number, "memory": object, "commentary": string, "analogy": string}]}
 
                 ${accuracyRules}
+                ${explanationUpgrade}
                 
                 Return JSON ONLY. No markdown wrapping outside the object.` 
             },
