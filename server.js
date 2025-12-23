@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 10000;
 const API_KEYS = (process.env.LLAMA_API_KEY || "").split(',').map(k => k.trim()).filter(k => k);
 let currentKeyIndex = 0;
 
-const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
+const LLAMA_API_URL = process.env.LLAMA_API_URL || "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)";
 
 /**
  * INTELLIGENCE TIERS (Triple-Model Failover)
@@ -156,15 +156,18 @@ async function extractConversationData(url) {
 }
 
 /**
- * Robust JSON Extractor
+ * Robust JSON Extractor - Fixed to handle markdown blocks and conversational noise
  */
 function extractJSON(text) {
+    if (!text) return null;
     try {
         const first = text.indexOf('{');
         const last = text.lastIndexOf('}');
         if (first === -1 || last === -1) return null;
-        return JSON.parse(text.substring(first, last + 1));
+        const jsonStr = text.substring(first, last + 1);
+        return JSON.parse(jsonStr);
     } catch (e) {
+        console.error("JSON Parse Error:", e.message);
         return null;
     }
 }
@@ -249,23 +252,21 @@ app.post('/api/debug', async (req, res) => {
            - If the line is EMPTY -> Commentary: "Whitespace / Empty physical line."
            - If the line is a COMMENT -> Commentary: "Documentation/Code comment."
         5. DO NOT EXPLAIN AHEAD: Do not explain the next line's logic while on a bracket line.
-        6. MEMORY PERSISTENCE (STRICT): The "memory" object MUST contain the full, current state of ALL variables in scope. Even on bracket or empty lines, you MUST list all defined variables and their current values. NEVER send an empty {} if variables have been defined in previous steps.
-        7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps (like a loop).
-        8. MEMORY INTEGRITY: Omission of defined variables is strictly forbidden.
+        6. MEMORY PERSISTENCE (STRICT): The "memory" object MUST contain the full, current state of ALL variables in scope. Carry forward values. NEVER leave as undefined.
+        7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps.
     ` : `
         CRITICAL ACCURACY RULES:
         1. Point EXACTLY to the code line where logic happens.
         2. Include EVERY physical line number exactly as it appears in the provided source code.
-        3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
-        4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
-        5. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all defined variables. Carry forward values in every step. Do not send {} on bracket steps.
-        6. Every step MUST include: 
+        3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace.
+        4. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all defined variables. Carry forward values in every step.
+        5. Every step MUST include: 
            - "line": (integer) The EXACT physical line number.
            - "memory": (object) Current variable states. Use {} if empty. NEVER leave as undefined.
            - "commentary": (string) Technical explanation.
            - "analogy": (string) A real-world ELI5 comparison.
-        7. If code involves pointers or nodes, represent them as strings like "Node(5)".
-        8. Do NOT skip logic milestones. Trace accurately for beginners.
+        6. If code involves pointers or nodes, represent them as strings like "Node(5)".
+        7. Do NOT skip logic milestones. Trace accurately for beginners.
     `;
 
     try {
@@ -274,17 +275,21 @@ app.post('/api/debug', async (req, res) => {
                 role: "system", 
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
                 Trace the provided ${language} code line-by-line. 
-                Return strictly a JSON object with a "steps" array.
+                Return strictly a JSON object with a "steps" array. 
+                SCHEMA: {"steps": [{"line": number, "memory": object, "commentary": string, "analogy": string}]}
 
                 ${accuracyRules}
                 
-                Return JSON ONLY.` 
+                Return JSON ONLY. No markdown wrapping outside the object.` 
             },
             { role: "user", content: `CODE:\n${code}` }
         ], true);
 
         const trace = extractJSON(result.choices?.[0]?.message?.content);
-        if (!trace || !trace.steps) throw new Error("AI returned malformed trace data.");
+        if (!trace || !Array.isArray(trace.steps)) {
+            console.error("Malformed AI Response:", result.choices?.[0]?.message?.content);
+            throw new Error("AI returned malformed trace data. logic extraction failed.");
+        }
         res.json({ success: true, trace });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -347,4 +352,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Account Triple-Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
