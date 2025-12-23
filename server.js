@@ -41,7 +41,7 @@ const MODELS = [
     "llama3-8b-8192"           // Tier 3: Ultimate Reliability Safety Net
 ];
 
-// Global browser instance for singleton pattern
+// Global browser instance for singleton pattern (Crucial for Render RAM limits)
 let globalBrowser = null;
 let activeScrapes = 0;
 const MAX_CONCURRENT_SCRAPES = 1; 
@@ -107,6 +107,7 @@ async function extractConversationData(url) {
     try {
         const browser = await getBrowser();
         page = await browser.newPage();
+        // Stealth headers to bypass basic bot detection
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
         await page.setRequestInterception(true);
@@ -240,18 +241,32 @@ async function callLlamaSmart(messages, isJson = false) {
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
 
-    const accuracyRules = `
-        CRITICAL ACCURACY RULES (TOTAL SYNCHRONIZATION):
-        1. PHYSICAL SCANNER MODE: Analyze the code exactly as formatted. 
-        2. NO SKIPPING: You MUST generate a step for EVERY physical line provided in the input, starting from line 1.
-        3. TERMINOLOGY LOCKDOWN:
-           - If a line contains ONLY an opening bracket '{' -> Commentary MUST be: "Scope opened / bracket opened."
-           - If a line contains ONLY a closing bracket '}' -> Commentary MUST be: "Scope closed / bracket closed."
-           - If a line is EMPTY or contains only spaces -> Commentary MUST be: "Whitespace / Empty space line."
-           - If a line is a COMMENT -> Commentary MUST be: "Code comment / documentation."
-        4. LINE MAPPING: The "line" integer in your JSON must exactly match the index of the physical line in the provided source code.
-        5. MEMORY PERSISTENCE: Even on bracket or space lines, you MUST include the "memory" object with all currently active variables. NEVER return {}.
-        6. ANALOGY RULE: For bracket lines, the analogy should explain the concept of scope (e.g., "Entering a new room" or "Exiting the building").
+    const accuracyRules = language === 'c' ? `
+        CRITICAL ACCURACY RULES (C-SPECIFIC LOCKDOWN):
+        1. PHYSICAL SCANNER MODE: Analyze the code exactly as formatted.
+        2. TOTAL SYNCHRONIZATION: You MUST generate exactly one step for EVERY physical line provided in the code, starting from Line 1 to the end.
+        3. NO SKIPPING: Even if a line is empty, contains only a bracket '{' or '}', or a comment, you MUST create a step for it.
+        4. MANDATORY COMMENTARY FOR NON-LOGIC LINES:
+           - If the line is '{' -> Commentary: "Scope start / bracket opened."
+           - If the line is '}' -> Commentary: "Scope end / bracket closed."
+           - If the line is EMPTY -> Commentary: "Space / Whitespace line."
+           - If the line is a COMMENT -> Commentary: "Code comment."
+        5. DO NOT EXPLAIN AHEAD: Do not explain the next line's logic while on a bracket line.
+        6. MEMORY PERSISTENCE (STRICT): The "memory" object MUST contain the full, current state of ALL variables in scope for every single step. NEVER send an empty {} if variables have been defined in previous steps. Once a variable exists, it stays in memory until the end.
+        7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps.
+    ` : `
+        CRITICAL ACCURACY RULES:
+        1. Point EXACTLY to the code line where logic happens.
+        2. Include EVERY physical line number exactly as it appears in the provided source code.
+        3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace.
+        4. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all defined variables. Carry forward values in every single step. Do not send {} on bracket steps. Persistence is mandatory.
+        5. Every step MUST include: 
+           - "line": (integer) The EXACT physical line number.
+           - "memory": (object) Current variable states. Include ALL variables declared so far. NEVER leave as undefined.
+           - "commentary": (string) Technical explanation.
+           - "analogy": (string) A real-world ELI5 comparison.
+        6. If code involves pointers or nodes, represent them as strings like "Node(5)".
+        7. Do NOT skip logic milestones. Trace accurately for beginners.
     `;
 
     try {
@@ -337,4 +352,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Triple-Failover Backend Active on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Pluto Multi-Account Triple-Failover Backend Active on port ${PORT}`));
