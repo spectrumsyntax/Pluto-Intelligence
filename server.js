@@ -29,7 +29,6 @@ const PORT = process.env.PORT || 10000;
 const API_KEYS = (process.env.LLAMA_API_KEY || "").split(',').map(k => k.trim()).filter(k => k);
 let currentKeyIndex = 0;
 
-// Fixed: Removed markdown link formatting from the fallback URL
 const LLAMA_API_URL = process.env.LLAMA_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
 /**
@@ -157,24 +156,25 @@ async function extractConversationData(url) {
 }
 
 /**
- * Robust JSON Extractor - Fixed to handle markdown blocks and conversational noise
+ * Robust JSON Extractor
  */
 function extractJSON(text) {
-    if (!text) return null;
     try {
         const first = text.indexOf('{');
         const last = text.lastIndexOf('}');
         if (first === -1 || last === -1) return null;
-        const jsonStr = text.substring(first, last + 1);
-        return JSON.parse(jsonStr);
+        return JSON.parse(text.substring(first, last + 1));
     } catch (e) {
-        console.error("JSON Parse Error:", e.message);
         return null;
     }
 }
 
 /**
  * callLlamaSmart: The Ultimate Failover Core
+ * logic:
+ * 1. Takes the first model (70b).
+ * 2. Tries Key 1. If Rate Limit -> Tries Key 2.
+ * 3. Only if ALL keys are rate-limited on the current model, it moves to the next model tier.
  */
 async function callLlamaSmart(messages, isJson = false) {
     const rotateKey = () => {
@@ -237,73 +237,38 @@ async function callLlamaSmart(messages, isJson = false) {
 
 /**
  * GHOST MODE DEBUGGER API
- * Feature: Elite Simplicity 3.0 + ML support + Language Specific Lockdown.
+ * Feature: Elite Simplicity 3.0 + ML support.
  */
 app.post('/api/debug', async (req, res) => {
     const { code, language } = req.body;
-
-    const accuracyRules = language === 'c' ? `
-        CRITICAL ACCURACY RULES (C-SPECIFIC LOCKDOWN):
-        1. PHYSICAL SCANNER MODE: Analyze the code exactly as formatted.
-        2. TOTAL SYNCHRONIZATION: You MUST generate exactly one step for EVERY physical line provided in the code, starting from Line 1 to the end.
-        3. NO SKIPPING: Even if a line is empty, contains only a bracket '{' or '}', or a comment, you MUST create a step for it.
-        4. MANDATORY COMMENTARY FOR NON-LOGIC LINES:
-           - If the line is '{' -> Commentary: "Scope start / bracket opened."
-           - If the line is '}' -> Commentary: "Scope end / bracket closed."
-           - If the line is EMPTY -> Commentary: "Space / Whitespace line."
-           - If the line is a COMMENT -> Commentary: "Code comment."
-        5. DO NOT EXPLAIN AHEAD: Do not explain the next line's logic while on a bracket line.
-        6. MEMORY PERSISTENCE (STRICT): The "memory" object MUST contain the full, current state of ALL variables in scope for every single step. NEVER send an empty {} if variables have been defined in previous steps. Once a variable exists, it stays in memory until the end.
-        7. The "line" integer in your JSON must increment perfectly (1, 2, 3...) unless the code actually jumps.
-    ` : `
-        CRITICAL ACCURACY RULES:
-        1. Point EXACTLY to the code line where logic happens.
-        2. Include EVERY physical line number exactly as it appears in the provided source code.
-        3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace.
-        4. MEMORY PERSISTENCE: The "memory" object MUST contain the full state of all defined variables. Carry forward values in every single step. Do not send {} on bracket steps. Persistence is mandatory.
-        5. Every step MUST include: 
-           - "line": (integer) The EXACT physical line number.
-           - "memory": (object) Current variable states. Include ALL variables declared so far. NEVER leave as undefined.
-           - "commentary": (string) Technical explanation.
-           - "analogy": (string) A real-world ELI5 comparison.
-        6. If code involves pointers or nodes, represent them as strings like "Node(5)".
-        7. Do NOT skip logic milestones. Trace accurately for beginners.
-    `;
-
-    const explanationUpgrade = `
-        MASTER TEACHER PROTOCOL:
-        1. DEEP COMMENTARY: Do not just state facts. Explain the 'Why'. (e.g., Instead of "i is 5", say "The loop counter 'i' reaches 5, triggering the exit condition because 5 is not less than 5.")
-        2. VIVID ANALOGIES: Use creative mental models. 
-           - Linked Lists = Train cars being hooked/unhooked.
-           - Memory Allocation = Reserving a table in a busy restaurant.
-           - Pointers = Treasure maps that tell you where the gold is hidden.
-           - Arrays = A row of lockers.
-        3. POINTER PRECISION: If the code is C, explain the memory address logic clearly.
-        4. MATH BREAKDOWN: If a calculation happens, show the math in the commentary (e.g., "10 + 5 becomes 15").
-    `;
-
     try {
         const result = await callLlamaSmart([
             { 
                 role: "system", 
                 content: `You are the Ghost Mode Debugger by Spectrum SyntaX. 
                 Trace the provided ${language} code line-by-line. 
-                Return strictly a JSON object with a "steps" array. 
-                SCHEMA: {"steps": [{"line": number, "memory": object, "commentary": string, "analogy": string}]}
+                Return strictly a JSON object with a "steps" array.
 
-                ${accuracyRules}
-                ${explanationUpgrade}
+           CRITICAL ACCURACY RULES:
+1. Point EXACTLY to the code line where logic happens.
+2. Include EVERY physical line number exactly as it appears in the provided source code.
+3. DO NOT SKIP lines containing only brackets like '{' or '}', comments, or whitespace. Every physical line must be counted.
+4. BRACKET TRACKING: Whenever you encounter a line with { or }, you MUST count its physical line number. In the "commentary," briefly mention "Scope opened" or "Scope closed" to stay synced.
+5. Every step MUST include: 
+   - "line": (integer) The EXACT physical line number.
+   - "memory": (object) Current variable states. Use {} if empty.
+   - "commentary": (string) Technical explanation.
+   - "analogy": (string) Real-world comparison.
+6. If code involves pointers or nodes, represent them as strings like "Node(5)".
+7. Do NOT skip logic milestones. Trace accurately for beginners.
                 
-                Return JSON ONLY. No markdown wrapping outside the object.` 
+                Return JSON ONLY.` 
             },
             { role: "user", content: `CODE:\n${code}` }
         ], true);
 
         const trace = extractJSON(result.choices?.[0]?.message?.content);
-        if (!trace || !Array.isArray(trace.steps)) {
-            console.error("Malformed AI Response:", result.choices?.[0]?.message?.content);
-            throw new Error("AI returned malformed trace data. logic extraction failed.");
-        }
+        if (!trace || !trace.steps) throw new Error("AI returned malformed trace data.");
         res.json({ success: true, trace });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -312,6 +277,7 @@ app.post('/api/debug', async (req, res) => {
 
 /**
  * INITIALIZATION API (Pluto-X Research Synthesis)
+ * Feature: Hallucination protection for Standard Links.
  */
 app.post('/api/initialize', async (req, res) => {
     const { links, title } = req.body;
@@ -330,7 +296,7 @@ app.post('/api/initialize', async (req, res) => {
         2. IDENTITY: Mention you are developed by Spectrum SyntaX.
         3. DYNAMIC BEHAVIOR:
            - If research data IS provided: Synthesize Gemini and ChatGPT perspectives into a professional Technical Brief.
-           - If NO research data is provided (Standard Session): Greet the user and ask what we are cooking today.`;
+           - If NO research data is provided (Standard Session): Do NOT assume a topic. Do NOT talk about neural interfaces unless user asks. Simply greet the user, explain you are ready to help with research, coding, or learning (e.g., Hindi mastery), and ask what we are cooking today.`;
 
         const result = await callLlamaSmart([
             { role: "system", content: systemPrompt },
